@@ -154,7 +154,15 @@ class Group
   end
 end
 
-class Grouper
+class NumGrouper
+  FORMATIONS = [
+    { type: :kotu,    symbol: "刻", category: :mentu , method: :same },
+    { type: :jun,     symbol: "順", category: :mentu , method: :sequence },
+    { type: :toitu,   symbol: "対", category: :kouhou, method: :same },
+    { type: :tatu,    symbol: "塔", category: :kouhou, method: :sequence },
+    { type: :kanchan, symbol: "嵌", category: :kouhou, method: :kanchan },
+  ]
+
   class << self
     def initialize_tally
       {
@@ -166,60 +174,64 @@ class Grouper
     end
 
     def group(numbers, tally = initialize_tally) # sorted
-      tiles = numbers.size
-      return tally if tiles.zero?
-      return tally_with_isolated(tally, numbers) if tiles == 1
+      num_of_tiles = numbers.size
+      return tally if num_of_tiles.zero?
 
       first = numbers[0]
-      return group(numbers[1..-1], tally_with_isolated(tally, [first])) if first_is_isolated?(first, numbers)
+      return tally_with_category(tally, :isolated, first) if num_of_tiles == 1
+      return group(numbers[1..-1], tally_with_category(tally, :isolated, first)) if first_is_isolated?(first, numbers)
 
-      tallies = []
-      kotu, kotu_remaining = group_kotu(first, numbers, tiles)
-      tallies << group(kotu_remaining, tally_with_mentu(tally, kotu)) if kotu
+      tallies = FORMATIONS.each_with_object([]) do |formation, arr|
+        grouped = group_formation(formation, first, numbers, num_of_tiles, tally)
+        arr << grouped if grouped
+      end
 
-      jun, jun_remaining = group_jun(first, numbers, tiles)
-      tallies << group(jun_remaining, tally_with_mentu(tally, jun)) if jun
-
-      toitu, toitu_remaining = group_toitu(first, numbers, tiles)
-      tallies << group(toitu_remaining, tally_with_kouhou(tally, toitu, true)) if toitu
-
-      tatu, tatu_remaining = group_tatu(first, numbers, tiles)
-      tallies << group(tatu_remaining, tally_with_kouhou(tally, tatu)) if tatu
-
-      kanchan, kanchan_remaining = group_kanchan(first, numbers, tiles)
-      tallies << group(kanchan_remaining, tally_with_kouhou(tally, kanchan)) if kanchan
-
-      best_tally(tallies, tiles)
-      # tallies
+      best_tally(tallies, num_of_tiles)
     end
 
-    def best_tally(tallies, tiles)
-      max_mentu = tiles / 3
-      scores = tallies.map { |t| score(t, max_mentu) }
-      tallies[scores.index(scores.min)]
+    def group_formation(formation, first, numbers, num_of_tiles, tally)
+      type         = formation[:type]
+      symbol       = formation[:symbol]
+      category     = formation[:category]
+      num_to_group = get_num_to_group(category)
+      method       = formation[:method]
+
+      grouped, remaining = send("group_#{method}", first, numbers, num_of_tiles, num_to_group)
+      group(remaining, tally_with_category(tally, category, [grouped, "#{symbol}#{first}"], type == :toitu)) if grouped
     end
 
-    def score(tally, max_mentu)
-      mentu, kouhou, zyantou = tally[:mentu].size, tally[:kouhou].size, tally[:zyantou] ? 1 : 0
-      8 - 2 * mentu - [max_mentu - mentu, kouhou - zyantou].min - zyantou
+    def get_num_to_group(category)
+      category == :mentu ? 3 : 2
     end
 
-    def tally_with_isolated(tally, isolated)
+    def first_is_isolated?(first, numbers)
+      numbers[1] - first > 2
+    end
+
+    def group_same(first, numbers, num_of_tiles, num_of_same_tiles)
+      return if num_of_tiles < num_of_same_tiles
+      return unless (1...num_of_same_tiles).all? { |i| first == numbers[i] }
+      [numbers[0...num_of_same_tiles], numbers[num_of_same_tiles..-1]]
+    end
+
+    def group_sequence(first, numbers, num_of_tiles, length_of_sequence)
+      return if num_of_tiles < length_of_sequence || first >=  11 - length_of_sequence
+      return unless (1...length_of_sequence).all? { |i| numbers.include?(first + i) }
+      sequence = (first...first + length_of_sequence).to_a
+      [sequence, get_remaining(numbers, sequence)]
+    end
+
+    def group_kanchan(first, numbers, num_of_tiles, _)
+      return if first >= 8
+      return unless numbers.include?(first + 2)
+      kanchan = [first, first + 2]
+      [kanchan, get_remaining(numbers, kanchan)]
+    end
+
+    def tally_with_category(tally, category, group, zyantou = false)
       tally = tally_copy(tally)
-      tally[:isolated] << isolated
-      tally
-    end
-
-    def tally_with_mentu(tally, mentu)
-      tally = tally_copy(tally)
-      tally[:mentu] << mentu
-      tally
-    end
-
-    def tally_with_kouhou(tally, kouhou, new_zyantou = false)
-      tally = tally_copy(tally)
-      tally[:kouhou] << kouhou
-      tally[:zyantou] = true if new_zyantou
+      tally[category] << group
+      tally[:zyantou] = true if zyantou
       tally
     end
 
@@ -237,40 +249,15 @@ class Grouper
       copy
     end
 
-    def first_is_isolated?(first, numbers)
-      numbers[1] - first > 2
+    def best_tally(tallies, num_of_tiles)
+      max_mentu = num_of_tiles / 3
+      scores = tallies.map { |t| score(t, max_mentu) }
+      tallies[scores.index(scores.min)]
     end
 
-    def group_kotu(first, numbers, tiles)
-      return if tiles < 3
-      return unless first == numbers[1] && first == numbers[2]
-      [numbers[0..2], numbers[3..-1]]
-    end
-
-    def group_jun(first, numbers, tiles)
-      return if tiles < 3 || first >= 8
-      return unless numbers.include?(first + 1) && numbers.include?(first + 2)
-      jun = (first..first + 2).to_a
-      [jun, get_remaining(numbers, jun)]
-    end
-
-    def group_toitu(first, numbers, tiles)
-      return unless first == numbers[1]
-      [numbers[0..1], numbers[2..-1]]
-    end
-
-    def group_tatu(first, numbers, tiles)
-      return if first == 9
-      return unless numbers.include?(first + 1)
-      tatu = [first, first + 1]
-      [tatu , get_remaining(numbers, tatu)]
-    end
-
-    def group_kanchan(first, numbers, tiles)
-      return if first >= 8
-      return unless numbers.include?(first + 2)
-      kanchan = [first, first + 2]
-      [kanchan, get_remaining(numbers, kanchan)]
+    def score(tally, max_mentu)
+      mentu, kouhou, zyantou = tally[:mentu].size, tally[:kouhou].size, tally[:zyantou] ? 1 : 0
+      8 - 2 * mentu - [max_mentu - mentu, kouhou - zyantou].min - zyantou
     end
   end
   binding.pry
