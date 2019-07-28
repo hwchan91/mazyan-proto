@@ -1,4 +1,6 @@
 require 'pry'
+require 'json'
+require 'benchmark'
 
 class Pai
   attr_reader :suit, :number, :character
@@ -163,6 +165,12 @@ class NumGrouper
     { type: :kanchan, symbol: "嵌", category: :kouhou, method: :kanchan },
   ]
 
+  if File.exist?("cache.json")
+    CACHE = JSON.parse(File.read("cache.json"))
+  else
+    CACHE = nil
+  end
+
   class << self
     def initialize_tally
       {
@@ -173,23 +181,33 @@ class NumGrouper
       }
     end
 
-    def group(numbers, tally = initialize_tally) # sorted
+    def group_from_cache(numbers)
+      if CACHE
+        result = CACHE[numbers.join("")]
+        return result if result
+      end
+
+      group(numbers)
+    end
+
+    def group(numbers, tally = initialize_tally, return_one: false) # sorted
       num_of_tiles = numbers.size
       return tally if num_of_tiles.zero?
 
       first = numbers[0]
       return tally_with_category(tally, :isolated, first) if num_of_tiles == 1
-      return group(numbers[1..-1], tally_with_category(tally, :isolated, first)) if first_is_isolated?(first, numbers)
+      return group(numbers[1..-1], tally_with_category(tally, :isolated, first), return_one: return_one) if first_is_isolated?(first, numbers)
 
       tallies = FORMATIONS.each_with_object([]) do |formation, arr|
-        grouped = group_formation(formation, first, numbers, num_of_tiles, tally)
+        grouped = group_formation(formation, first, numbers, num_of_tiles, tally, return_one)
         arr << grouped if grouped
       end
+      tallies.flatten!
 
-      best_tally(tallies, num_of_tiles)
+      best_tally(tallies, num_of_tiles, return_one)
     end
 
-    def group_formation(formation, first, numbers, num_of_tiles, tally)
+    def group_formation(formation, first, numbers, num_of_tiles, tally, return_one)
       type         = formation[:type]
       symbol       = formation[:symbol]
       category     = formation[:category]
@@ -197,7 +215,7 @@ class NumGrouper
       method       = formation[:method]
 
       grouped, remaining = send("group_#{method}", first, numbers, num_of_tiles, num_to_group)
-      group(remaining, tally_with_category(tally, category, [grouped, "#{symbol}#{first}"], type == :toitu)) if grouped
+      group(remaining, tally_with_category(tally, category, [grouped, "#{symbol}#{first}"], type == :toitu), return_one: return_one) if grouped
     end
 
     def get_num_to_group(category)
@@ -249,10 +267,13 @@ class NumGrouper
       copy
     end
 
-    def best_tally(tallies, num_of_tiles)
+    def best_tally(tallies, num_of_tiles, return_one)
       max_mentu = num_of_tiles / 3
       scores = tallies.map { |t| score(t, max_mentu) }
-      tallies[scores.index(scores.min)]
+      min_score = scores.min
+      indices_with_min_score = (0...scores.size).select { |i| scores[i] == min_score }
+      best = indices_with_min_score.map{ |i| tallies[i] }
+      return_one ? [best.first] : best
     end
 
     def score(tally, max_mentu)
@@ -260,7 +281,50 @@ class NumGrouper
       8 - 2 * mentu - [max_mentu - mentu, kouhou - zyantou].min - zyantou
     end
   end
-  binding.pry
+end
+
+class CacheGenerator
+  class << self
+    def combinations(max_repeat: 3, max_tiles: 5, start_from: 1, up_to: 9, existing: [])
+      return existing if max_tiles == 0
+
+      start_from += 1 if existing[-max_repeat] == start_from
+
+      arr = []
+      (start_from..up_to).each do |i|
+        before = existing.clone
+        before << i
+        arr << combinations(max_repeat: max_repeat, max_tiles: max_tiles - 1, start_from: i, up_to: up_to, existing: before)
+      end
+
+      arr
+    end
+
+    def get_combinations(max_repeat: 4, max_tiles: 12, start_from: 1, up_to: 9)
+      combinations(
+        max_repeat: max_repeat,
+        max_tiles:  max_tiles,
+        start_from: start_from,
+        up_to:      up_to
+      ).flatten(max_tiles - 1)
+    end
+
+    def get_all_combinations(max_repeat: 4, min_tiles: 1, max_tiles: 9, start_from: 1, up_to: 9)
+      (min_tiles..max_tiles).each_with_object([]) do |i, arr| 
+        arr << get_combinations(max_repeat: max_repeat, max_tiles: i, start_from: start_from, up_to: up_to)
+      end.flatten(1)
+    end
+
+    def generate_cache(combinations = get_all_combinations, file = "cache.json")
+      hash = {}
+      combinations.each do |numbers|
+        value = NumGrouper.group(numbers, return_one: true)
+        key = numbers.join("")
+        hash[key] = value
+      end
+      File.open(file, 'a+') { |f| f.write(hash.to_json) }
+    end
+  end
 end
 
 
@@ -275,5 +339,18 @@ end
 
 class Mazyan
   def self.display(monzen, furou = [])
+  end
+end
+
+# binding.pry
+
+samples = CacheGenerator.get_combinations(max_tiles: 9).sample(10000)
+Benchmark.bm do |x|
+  x.report do
+    samples.each {|s| NumGrouper.group(s) }
+  end
+
+  x.report do
+    samples.each {|s| NumGrouper.group_from_cache(s) }
   end
 end
