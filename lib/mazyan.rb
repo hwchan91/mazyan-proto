@@ -158,11 +158,11 @@ end
 
 class NumGrouper
   FORMATIONS = [
-    { type: :kotu,    symbol: "刻", category: :mentu , method: :same },
-    { type: :jun,     symbol: "順", category: :mentu , method: :sequence },
-    { type: :toitu,   symbol: "対", category: :kouhou, method: :same },
-    { type: :tatu,    symbol: "塔", category: :kouhou, method: :sequence },
-    { type: :kanchan, symbol: "嵌", category: :kouhou, method: :kanchan },
+    { type: :kotu,    symbol: "刻", category: "mentu",  method: :same },
+    { type: :jun,     symbol: "順", category: "mentu",  method: :sequence },
+    { type: :toitu,   symbol: "対", category: "kouhou", method: :same },
+    { type: :tatu,    symbol: "塔", category: "kouhou", method: :sequence },
+    { type: :kanchan, symbol: "嵌", category: "kouhou", method: :kanchan },
   ]
 
   if File.exist?("cache.json")
@@ -174,37 +174,52 @@ class NumGrouper
   class << self
     def initialize_tally
       {
-        mentu:   [],
-        kouhou:  [],
-        isolated: [],
-        zyantou: false
+        "mentu"    => [],
+        "kouhou"   => [],
+        "isolated" =>  [],
+        "zyantou"  => false
       }
     end
 
     def group_from_cache(numbers)
-      if CACHE
-        result = CACHE[numbers.join("")]
-        return result if result
-      end
-
-      group(numbers)
+      group(numbers, return_one: true)
     end
 
     def group(numbers, tally = initialize_tally, return_one: false) # sorted
+      # if return_one && CACHE
+      #   cached_tally = CACHE[numbers.join("")]&.first
+      #   return combine_tallies(cached_tally, tally) if cached_tally
+      # end
+
       num_of_tiles = numbers.size
       return tally if num_of_tiles.zero?
 
       first = numbers[0]
-      return tally_with_category(tally, :isolated, first) if num_of_tiles == 1
-      return group(numbers[1..-1], tally_with_category(tally, :isolated, first), return_one: return_one) if first_is_isolated?(first, numbers)
+      return tally_with_category(tally, "isolated", first) if num_of_tiles == 1
+      return group_without_first(first, numbers, tally, return_one) if first_is_isolated?(first, numbers)
 
       tallies = FORMATIONS.each_with_object([]) do |formation, arr|
         grouped = group_formation(formation, first, numbers, num_of_tiles, tally, return_one)
         arr << grouped if grouped
       end
+
+      tallies << group_without_first(first, numbers, tally, return_one)
+
       tallies.flatten!
 
       best_tally(tallies, num_of_tiles, return_one)
+    end
+
+    def combine_tallies(tally1, tally2)
+      h = %w(mentu kouhou isolated).each_with_object({}) { |category, h| h[category] = tally1[category] + tally2[category] }
+      h["zyantou"] = tally1["zyantou"] && tally2["zyantou"]
+      h
+    rescue => e
+      binding.pry
+    end
+
+    def group_without_first(first, numbers, tally, return_one)
+      group(numbers[1..-1], tally_with_category(tally, "isolated", first), return_one: return_one)
     end
 
     def group_formation(formation, first, numbers, num_of_tiles, tally, return_one)
@@ -219,7 +234,7 @@ class NumGrouper
     end
 
     def get_num_to_group(category)
-      category == :mentu ? 3 : 2
+      category == "mentu" ? 3 : 2
     end
 
     def first_is_isolated?(first, numbers)
@@ -249,8 +264,10 @@ class NumGrouper
     def tally_with_category(tally, category, group, zyantou = false)
       tally = tally_copy(tally)
       tally[category] << group
-      tally[:zyantou] = true if zyantou
+      tally["zyantou"] = true if zyantou
       tally
+    rescue => e
+      p category
     end
 
     def get_remaining(numbers, to_remove)
@@ -273,12 +290,18 @@ class NumGrouper
       min_score = scores.min
       indices_with_min_score = (0...scores.size).select { |i| scores[i] == min_score }
       best = indices_with_min_score.map{ |i| tallies[i] }
-      return_one ? [best.first] : best
+      return best unless return_one
+
+      num_of_mentu = best.map { |tally| tally["mentu"].size }
+      best[num_of_mentu.index(num_of_mentu.max)]
     end
 
     def score(tally, max_mentu)
-      mentu, kouhou, zyantou = tally[:mentu].size, tally[:kouhou].size, tally[:zyantou] ? 1 : 0
+      mentu, kouhou, zyantou = tally["mentu"].size, tally["kouhou"].size, tally["zyantou"] ? 1 : 0
       8 - 2 * mentu - [max_mentu - mentu, kouhou - zyantou].min - zyantou
+    rescue => e
+      p e.backtrace
+      p tally['mentu']
     end
   end
 end
@@ -310,12 +333,12 @@ class CacheGenerator
     end
 
     def get_all_combinations(max_repeat: 4, min_tiles: 1, max_tiles: 9, start_from: 1, up_to: 9)
-      (min_tiles..max_tiles).each_with_object([]) do |i, arr| 
+      (min_tiles..max_tiles).each_with_object([]) do |i, arr|
         arr << get_combinations(max_repeat: max_repeat, max_tiles: i, start_from: start_from, up_to: up_to)
       end.flatten(1)
     end
 
-    def generate_cache(combinations = get_all_combinations, file = "cache.json")
+    def generate_cache(combinations = get_all_combinations, file = "cache2.json")
       hash = {}
       combinations.each do |numbers|
         value = NumGrouper.group(numbers, return_one: true)
@@ -342,15 +365,7 @@ class Mazyan
   end
 end
 
-# binding.pry
+binding.pry
 
-samples = CacheGenerator.get_combinations(max_tiles: 9).sample(10000)
-Benchmark.bm do |x|
-  x.report do
-    samples.each {|s| NumGrouper.group(s) }
-  end
-
-  x.report do
-    samples.each {|s| NumGrouper.group_from_cache(s) }
-  end
-end
+# samples = CacheGenerator.get_combinations(max_tiles: 9).sample(10)
+# samples.each {|s| p s; puts "\n"; p NumGrouper.group_from_cache(s); puts "\n\n\n" }
