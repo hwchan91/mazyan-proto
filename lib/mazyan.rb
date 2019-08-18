@@ -519,7 +519,7 @@ class KokuShiMuSouGrouper
         remaining = matched if matched
       end
 
-      has_zyantou ? missing : missing + %w(?) # ? represents any pai in the pattern for zyantou
+      has_zyantou ? missing : missing + %w(?) # ? represents any pai in the pattern for zyantou; subject to change later
     end
 
     def delete_one(characters, char_to_delete)
@@ -534,9 +534,37 @@ end
 
 # skip when furou is present
 class ChiToiTuGrouper
-  def get_shantei(characters)
+  class << self
+    def get_shantei(monzen)
+      shantei, _ = get_shantei_and_isolated(monzen)
+      shantei
+    end
 
+    # subject to change
+    def get_missing(monzen)
+      shantei, missing = get_shantei_and_isolated(monzen)
+      raise 'not tenpai' unless shantei == 0
+      missing.first
+    end
+
+    def get_shantei_and_isolated(monzen)
+      monzen = monzen.scan(/[^\s|,]/) # duplicated logic in Pai
+      histogram = get_histogram(monzen)
+      paired, isolated = histogram.partition { |char, count| count >= 2 }
+      [6 - paired.count, isolated.map(&:first)]
+    end
+
+    def get_histogram(characters)
+      characters.inject({}) do |h, char|
+        h[char] = (h[char] || 0) + 1
+        h
+      end
+    end
   end
+end
+
+class MazyanGrouper
+
 end
 
 binding.pry
