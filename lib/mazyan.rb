@@ -38,25 +38,6 @@ class Pai
       pai
     end
   end
-
-  # def initialize(character: nil, suit: nil, number: nil)
-  #   return initialize_by_character(character) if character
-  #   return initialize_by_suit_and_number(suit, number) if suit && number
-  #   raise CannotInitializeError
-  # end
-
-  # def initialize_by_character(character)
-  #   @character = character
-  #   @suit, @number = self.class.lookup_table[character]
-  #   raise InvalidCharacterError unless @suit
-  # end
-
-  # def initialize_by_suit_and_number(suit, number)
-  #   raise CannotInitializeError unless number.between?(1,9)
-  #   @suit, @number = suit, number
-  #   @character = TILES[suit.to_s][number - 1] rescue nil
-  #   raise CannotInitializeError unless @character
-  # end
 end
 
 # class Group
@@ -214,7 +195,7 @@ class NumGrouper
       tallies.flatten!
       tallies = remove_same(tallies)
 
-      best_tally(tallies, num_of_tiles, return_one)
+      best_tally(tallies, return_one)
     end
 
     def combine_tallies(tally1, tally2)
@@ -298,21 +279,20 @@ class NumGrouper
       copy
     end
 
-    def best_tally(tallies, num_of_tiles, return_one)
-      max_mentu = num_of_tiles / 3
-      scores = tallies.map { |t| score(t, max_mentu) }
-      min_score = scores.min
-      indices_with_min_score = (0...scores.size).select { |i| scores[i] == min_score }
-      best = indices_with_min_score.map{ |i| tallies[i] }
-      return best unless return_one
+    def best_tally(tallies, return_one)
+      mentu_count = tallies.map { |t| t['mentu'].count }
+      max_mentu = mentu_count.max
+      indices_with_max_mentu = (0...mentu_count.size).select { |i| mentu_count[i] == max_mentu }
+      tallies = indices_with_max_mentu.map{ |i| tallies[i] }
 
-      num_of_mentu = best.map { |tally| tally["mentu"].size }
-      best[num_of_mentu.index(num_of_mentu.max)]
-    end
+      if tallies.count > 1
+        isolated_count = tallies.map { |t| t['isolated'].count }
+        min_isolated = isolated_count.min
+        indices_with_min_isolated = (0...isolated_count.size).select { |i| isolated_count[i] == min_isolated }
+        tallies = indices_with_min_isolated.map{ |i| tallies[i] }
+      end
 
-    def score(tally, max_mentu)
-      mentu, kouhou, zyantou = tally["mentu"].size, tally["kouhou"].size, tally["zyantou"] ? 1 : 0
-      shantei = 8 - 2 * mentu - [max_mentu - mentu, kouhou - zyantou].min - zyantou
+      return_one ? tallies.first : tallies
     end
   end
 end
