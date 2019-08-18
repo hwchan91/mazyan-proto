@@ -3,13 +3,13 @@ require 'json'
 require 'benchmark'
 
 class Pai
-  attr_reader :suit, :number, :character
+  # attr_reader :suit, :number, :character
 
   class InvalidCharacterError < StandardError
   end
 
-  class CannotInitializeError < StandardError
-  end
+  # class CannotInitializeError < StandardError
+  # end
 
   TILES = {
     "字" => %w(東 南 西 北 白 發 中),
@@ -20,149 +20,155 @@ class Pai
 
   class << self
     def lookup_table
-      @@lookup_table ||= TILES.each_with_object({}) do |(kind, characters), h|
+      @@lookup_table ||= TILES.each_with_object({}) do |(suit, characters), h|
         characters.each_with_index do |character, i|
-          h[character] = [kind, i + 1]
+          h[character] = { suit: suit, number: i + 1}
         end
       end
     end
 
     def convert_characters(characters)
-      characters = characters.scan(/\w/)
-      characters.map { |c| Pai.new(character: c) }
+      characters = characters.scan(/[^\s|,]/)
+      characters.map { |c| convert_character(c) }
+    end
+
+    def convert_character(character)
+      pai = lookup_table[character]
+      raise InvalidCharacterError unless pai
+      pai
     end
   end
 
-  def initialize(character: nil, suit: nil, number: nil)
-    return initialize_by_character(character) if character
-    return initialize_by_suit_and_number(suit, number) if suit && number
-    raise CannotInitializeError
-  end
+  # def initialize(character: nil, suit: nil, number: nil)
+  #   return initialize_by_character(character) if character
+  #   return initialize_by_suit_and_number(suit, number) if suit && number
+  #   raise CannotInitializeError
+  # end
 
-  def initialize_by_character(character)
-    @character = character
-    @suit, @number = self.class.lookup_table[character]
-    raise InvalidCharacterError unless @suit
-  end
+  # def initialize_by_character(character)
+  #   @character = character
+  #   @suit, @number = self.class.lookup_table[character]
+  #   raise InvalidCharacterError unless @suit
+  # end
 
-  def initialize_by_suit_and_number(suit, number)
-    raise CannotInitializeError unless number.between?(1,9)
-    @suit, @number = suit, number
-    @character = TILES[suit.to_s][number - 1] rescue nil
-    raise CannotInitializeError unless @character
-  end
+  # def initialize_by_suit_and_number(suit, number)
+  #   raise CannotInitializeError unless number.between?(1,9)
+  #   @suit, @number = suit, number
+  #   @character = TILES[suit.to_s][number - 1] rescue nil
+  #   raise CannotInitializeError unless @character
+  # end
 end
 
-class Group
-  attr_reader :kind, :suit, :number, :is_complete, :is_furou
+# class Group
+#   attr_reader :kind, :suit, :number, :is_complete, :is_furou
 
-  def initialize(params)
-    @kind          = params[:kind] # 刻順槓嵌
-    @suit          = params[:suit]
-    @number        = params[:number]
-    @is_complete   = params[:is_complete]
-    @is_furou      = params[:is_furou] || false
+#   def initialize(params)
+#     @kind          = params[:kind] # 刻順槓嵌
+#     @suit          = params[:suit]
+#     @number        = params[:number]
+#     @is_complete   = params[:is_complete]
+#     @is_furou      = params[:is_furou] || false
 
-    @is_complete = true if @is_complete.nil?
-  end
+#     @is_complete = true if @is_complete.nil?
+#   end
 
-  def get_machi
-    return if is_complete
+#   def get_machi
+#     return if is_complete
 
-    case kind
-    when "刻" then get_kotu_machi
-    when "順" then get_jun_machi
-    when "嵌" then get_kanchan_machi
-    end
-  end
+#     case kind
+#     when "刻" then get_kotu_machi
+#     when "順" then get_jun_machi
+#     when "嵌" then get_kanchan_machi
+#     end
+#   end
 
-  def get_kotu_machi
-    [Pai.new(suit: suit, number: number)]
-  end
+#   def get_kotu_machi
+#     [Pai.new(suit: suit, number: number)]
+#   end
 
-  def get_jun_machi
-    before, after = number - 1, number + 2
-    machi = []
-    machi << Pai.new(suit: suit, number: before) if before >= 1
-    machi << Pai.new(suit: suit, number: after)  if after <= 9
-    machi
-  end
+#   def get_jun_machi
+#     before, after = number - 1, number + 2
+#     machi = []
+#     machi << Pai.new(suit: suit, number: before) if before >= 1
+#     machi << Pai.new(suit: suit, number: after)  if after <= 9
+#     machi
+#   end
 
-  def get_kanchan_machi
-    [Pai.new(suit: suit, number: number + 1)]
-  end
+#   def get_kanchan_machi
+#     [Pai.new(suit: suit, number: number + 1)]
+#   end
 
-  class << self
-    def group_pais(pais: nil, suit: nil, numbers: nil, allow_incomplete: false, allow_kan: false)
-      unless suit && numbers
-        suits, numbers = pais.map(&:suit), pais.map(&:number)
-        return unless all_same?(suits)
-        suit = suits.first
-      end
+#   class << self
+#     def group_pais(pais: nil, suit: nil, numbers: nil, allow_incomplete: false, allow_kan: false)
+#       unless suit && numbers
+#         suits, numbers = pais.map(&:suit), pais.map(&:number)
+#         return unless all_same?(suits)
+#         suit = suits.first
+#       end
 
-      num_of_pais = numbers.size
-      return unless num_of_pais.between?(2, 3) || (num_of_pais == 4 && allow_kan)
+#       num_of_pais = numbers.size
+#       return unless num_of_pais.between?(2, 3) || (num_of_pais == 4 && allow_kan)
 
-      return group_same(suit, numbers.first, num_of_pais) if all_same?(numbers)
+#       return group_same(suit, numbers.first, num_of_pais) if all_same?(numbers)
 
-      return unless suit != '字' && num_of_pais.between?(2, 3)
-      numbers = numbers.sort
-      return group_consecutive(suit, numbers.first, num_of_pais) if is_consecutive?(numbers)
+#       return unless suit != '字' && num_of_pais.between?(2, 3)
+#       numbers = numbers.sort
+#       return group_consecutive(suit, numbers.first, num_of_pais) if is_consecutive?(numbers)
 
-      return unless num_of_pais == 2 && is_kanchan?(numbers)
-      group_kanchan(suit, numbers.first)
-    end
+#       return unless num_of_pais == 2 && is_kanchan?(numbers)
+#       group_kanchan(suit, numbers.first)
+#     end
 
-    def all_same?(arr)
-      arr.uniq.size == 1
-    end
+#     def all_same?(arr)
+#       arr.uniq.size == 1
+#     end
 
-    def group_same(suit, number, num_of_pais)
-      case num_of_pais
-      when 4
-        Group.new(kind: "槓", suit: suit, number: number)
-      when 3
-        Group.new(kind: "刻", suit: suit, number: number)
-      when 2
-        Group.new(kind: "刻", suit: suit, number: number, is_complete: false)
-      else
-        nil
-      end
-    end
+#     def group_same(suit, number, num_of_pais)
+#       case num_of_pais
+#       when 4
+#         Group.new(kind: "槓", suit: suit, number: number)
+#       when 3
+#         Group.new(kind: "刻", suit: suit, number: number)
+#       when 2
+#         Group.new(kind: "刻", suit: suit, number: number, is_complete: false)
+#       else
+#         nil
+#       end
+#     end
 
-    def is_consecutive?(numbers)
-      (0...numbers.size - 1).all? { |i| numbers[i] + 1 == numbers[i + 1] }
-    end
+#     def is_consecutive?(numbers)
+#       (0...numbers.size - 1).all? { |i| numbers[i] + 1 == numbers[i + 1] }
+#     end
 
-    def group_consecutive(suit, number, num_of_pais)
-      case num_of_pais
-      when 3
-        Group.new(kind: "順", suit: suit, number: number)
-      when 2
-        Group.new(kind: "順", suit: suit, number: number, is_complete: false)
-      else
-        nil
-      end
-    end
+#     def group_consecutive(suit, number, num_of_pais)
+#       case num_of_pais
+#       when 3
+#         Group.new(kind: "順", suit: suit, number: number)
+#       when 2
+#         Group.new(kind: "順", suit: suit, number: number, is_complete: false)
+#       else
+#         nil
+#       end
+#     end
 
-    def is_kanchan?(numbers)
-      a, b = numbers
-      a + 1 == b - 1
-    end
+#     def is_kanchan?(numbers)
+#       a, b = numbers
+#       a + 1 == b - 1
+#     end
 
-    def group_kanchan(suit, number)
-      Group.new(kind: "嵌", suit: suit, number: number, is_complete: false)
-    end
-  end
-end
+#     def group_kanchan(suit, number)
+#       Group.new(kind: "嵌", suit: suit, number: number, is_complete: false)
+#     end
+#   end
+# end
 
 class NumGrouper
   FORMATIONS = [
-    { type: :kotu,    symbol: "刻", category: "mentu",  method: :same },
-    { type: :jun,     symbol: "順", category: "mentu",  method: :sequence },
-    { type: :toitu,   symbol: "対", category: "kouhou", method: :same },
-    { type: :tatu,    symbol: "塔", category: "kouhou", method: :sequence },
-    { type: :kanchan, symbol: "嵌", category: "kouhou", method: :kanchan },
+    { symbol: "刻", category: "mentu",  method: :same },
+    { symbol: "順", category: "mentu",  method: :sequence },
+    { symbol: "対", category: "kouhou", method: :same },
+    { symbol: "塔", category: "kouhou", method: :sequence },
+    { symbol: "嵌", category: "kouhou", method: :kanchan },
   ]
 
   if File.exist?("cache.json")
@@ -187,7 +193,7 @@ class NumGrouper
 
     def group(numbers, tally = initialize_tally, return_one: false) # sorted
       # if return_one && CACHE
-      #   cached_tally = CACHE[numbers.join("")]&.first
+      #   cached_tally = CACHE[numbers.join("")]
       #   return combine_tallies(cached_tally, tally) if cached_tally
       # end
 
@@ -198,7 +204,7 @@ class NumGrouper
       return tally_with_category(tally, "isolated", first) if num_of_tiles == 1
       return group_without_first(first, numbers, tally, return_one) if first_is_isolated?(first, numbers)
 
-      tallies = FORMATIONS.each_with_object([]) do |formation, arr|
+      tallies = self.const_get("FORMATIONS").each_with_object([]) do |formation, arr|
         grouped = group_formation(formation, first, numbers, num_of_tiles, tally, return_one)
         arr << grouped if grouped
       end
@@ -206,6 +212,7 @@ class NumGrouper
       tallies << group_without_first(first, numbers, tally, return_one)
 
       tallies.flatten!
+      tallies = remove_same(tallies)
 
       best_tally(tallies, num_of_tiles, return_one)
     end
@@ -214,8 +221,18 @@ class NumGrouper
       h = %w(mentu kouhou isolated).each_with_object({}) { |category, h| h[category] = tally1[category] + tally2[category] }
       h["zyantou"] = tally1["zyantou"] && tally2["zyantou"]
       h
-    rescue => e
-      binding.pry
+    end
+
+    def remove_same(tallies)
+      set = tallies.inject({}) do |h, tally|
+        h[get_key(tally)] = tally
+        h
+      end
+      set.values
+    end
+
+    def get_key(tally)
+      tally['mentu'].sort.join("") + tally['kouhou'].sort.join("")
     end
 
     def group_without_first(first, numbers, tally, return_one)
@@ -223,14 +240,13 @@ class NumGrouper
     end
 
     def group_formation(formation, first, numbers, num_of_tiles, tally, return_one)
-      type         = formation[:type]
       symbol       = formation[:symbol]
       category     = formation[:category]
       num_to_group = get_num_to_group(category)
       method       = formation[:method]
 
       grouped, remaining = send("group_#{method}", first, numbers, num_of_tiles, num_to_group)
-      group(remaining, tally_with_category(tally, category, [grouped, "#{symbol}#{first}"], type == :toitu), return_one: return_one) if grouped
+      group(remaining, tally_with_category(tally, category, "#{symbol}#{first}", symbol == "対"), return_one: return_one) if grouped
     end
 
     def get_num_to_group(category)
@@ -266,8 +282,6 @@ class NumGrouper
       tally[category] << group
       tally["zyantou"] = true if zyantou
       tally
-    rescue => e
-      p category
     end
 
     def get_remaining(numbers, to_remove)
@@ -298,10 +312,142 @@ class NumGrouper
 
     def score(tally, max_mentu)
       mentu, kouhou, zyantou = tally["mentu"].size, tally["kouhou"].size, tally["zyantou"] ? 1 : 0
-      8 - 2 * mentu - [max_mentu - mentu, kouhou - zyantou].min - zyantou
-    rescue => e
-      p e.backtrace
-      p tally['mentu']
+      shantei = 8 - 2 * mentu - [max_mentu - mentu, kouhou - zyantou].min - zyantou
+    end
+  end
+end
+
+class ZihaiGrouper < NumGrouper
+  FORMATIONS = [
+    { symbol: "刻", category: "mentu",  method: :same },
+    { symbol: "対", category: "kouhou", method: :same },
+  ]
+end
+
+class FurouIdentifier
+  class InvalidKanError < StandardError
+  end
+
+  class InvalidFurouError < StandardError
+  end
+
+  def self.identify(pais, ankan: false)
+    numbers, suits = pais.map { |p| p[:number] }, pais.map { |p| p[:suit] }
+    raise InvalidFurouError if suits.uniq.size != 1
+    suit = suits.first
+
+    if numbers.size == 4 && numbers.uniq.size == 1
+      formation = ankan ? "暗槓#{numbers.first}" : "大明槓#{numbers.first}"
+      return { suit: suit, formation: formation }
+    else
+      raise InvalidKanError if ankan
+    end
+
+    grouper = suit == "字" ? ZihaiGrouper : NumGrouper
+    tally = grouper.group(numbers, return_one: true)
+    raise InvalidFurouError if tally['mentu'].empty? || tally['kouhou'].any? || tally['isolated'].any?
+    formation = tally['mentu'].first
+    { suit: suit, formation: formation }
+  end
+end
+
+class MonzenGrouper
+  class << self
+    def group(pais)
+      tallies_per_suit = separated_pais(pais).map do |suit, numbers|
+        grouper = suit == "字" ? ZihaiGrouper : NumGrouper
+        tallies = grouper.group(numbers)
+        tallies.map { |tally| add_suit_to_tally(suit, tally) }
+      end
+      possibilities = get_permutations(tallies_per_suit)
+      possibilities.map { |p| combine_suits(p) }
+    end
+
+    def separated_pais(pais)
+      hash = pais.inject({}) do |h, pai|
+        suit, number = pai[:suit], pai[:number]
+        h[suit] ||= []
+        h[suit] << number
+        h
+      end
+      hash.each { |k,v| v.sort! }
+      hash
+    end
+
+    def add_suit_to_tally(suit, tally)
+      new_tally = {}
+      new_tally['mentu']    = tally['mentu'].map { |mentu| { suit: suit, formation: mentu} }
+      new_tally['kouhou']   = tally['kouhou'].map { |kouhou| { suit: suit, formation: kouhou} }
+      new_tally['isolated'] = tally['isolated'].map { |number| { suit: suit, number: number } }
+      new_tally['zyantou']  = tally['zyantou']
+      new_tally
+    end
+
+    def get_permutations(tallies)
+      permutations(tallies).flatten(tallies.size - 1)
+    end
+
+    def permutations(tallies, stored = [])
+      return stored if tallies.empty?
+      first_suit, rest = tallies[0], tallies[1..-1]
+      all = first_suit.map do |tally|
+        new_record = stored.dup
+        new_record << tally
+        permutations(rest, new_record)
+      end
+    end
+
+    def combine_suits(tallies)
+      combined_tally = {}
+      %w(mentu kouhou isolated).each do |type|
+        combined_tally[type] = tallies.inject([]) { |arr, t| arr += t[type] }
+      end
+      combined_tally['zyantou'] = tallies.inject(false) { |bool, t| bool || t['zyantou'] }
+      combined_tally
+    end
+  end
+end
+
+class GeneralGrouper
+  class << self
+    # for ease of testing, this nethod accepts an array of strings as the furou argument, a '*' must be appended to the end of the string to indicate ankan
+    def group(monzen: "", furou: [])
+      monzen_pais = Pai.convert_characters(monzen)
+      furou_formations = furou.map do |furou_characters|
+        ankan = furou_characters.include?('*')
+        furou_characters = furou_characters.gsub('*', '') if ankan
+
+        furou_characters = Pai.convert_characters(furou_characters)
+        FurouIdentifier.identify(furou_characters, ankan: ankan)
+      end
+      group_parsed(monzen: monzen_pais, furou: furou_formations)
+    end
+
+    # this method requires the monzen argument to be an array of pais(hashes), and furou to be an array of furou formations(hashes)
+    def group_parsed(monzen: [], furou: [])
+      tallies = MonzenGrouper.group(monzen)
+      tallies.each { |tally| tally['mentu'] += furou }
+      tallies
+    end
+
+    # accept characters
+    def get_shantei(monzen: "", furou: [], return_one: true)
+      tallies = group(monzen: monzen, furou: furou)
+      get_shantei_and_best_formations_from_tallies(tallies, return_one: return_one)
+    end
+
+    def get_shantei_and_best_formations_from_tallies(tallies, return_one: true)
+      scores = tallies.map { |t| get_shantei_from_tally(t) }
+      min_score = scores.min
+      indices_with_min_score = (0...scores.size).select { |i| scores[i] == min_score }
+      best = indices_with_min_score.map{ |i| tallies[i] }
+      formations = return_one ? best.first : best
+      [min_score, formations]
+    end
+
+    def get_shantei_from_tally(tally)
+      mentu, kouhou, zyantou = tally["mentu"].size, tally["kouhou"].size, tally["zyantou"] ? 1 : 0
+      8 - 2 * mentu - [4 - mentu, kouhou - zyantou].min - zyantou
     end
   end
 end
@@ -338,7 +484,7 @@ class CacheGenerator
       end.flatten(1)
     end
 
-    def generate_cache(combinations = get_all_combinations, file = "cache2.json")
+    def generate_cache(combinations = get_all_combinations, file = "cache.json")
       hash = {}
       combinations.each do |numbers|
         value = NumGrouper.group(numbers, return_one: true)
