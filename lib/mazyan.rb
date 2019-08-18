@@ -173,10 +173,10 @@ class NumGrouper
     end
 
     def group(numbers, tally = initialize_tally, return_one: false) # sorted
-      # if return_one && CACHE
-      #   cached_tally = CACHE[numbers.join("")]
-      #   return combine_tallies(cached_tally, tally) if cached_tally
-      # end
+      if return_one && CACHE
+        cached_tally = CACHE[numbers.join("")]
+        return combine_tallies(cached_tally, tally) if cached_tally
+      end
 
       num_of_tiles = numbers.size
       return tally if num_of_tiles.zero?
