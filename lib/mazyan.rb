@@ -37,6 +37,14 @@ class Pai
       raise InvalidCharacterError unless pai
       pai
     end
+
+    def to_characters(pais)
+      pais.map { |pai| to_character(pai)}
+    end
+
+    def to_character(pai)
+      TILES[pai[:suit]][pai[:number] - 1]
+    end
   end
 end
 
@@ -390,6 +398,7 @@ class MonzenGrouper
 end
 
 class GeneralGrouper
+  # to do: move this to the scope of the final grouper
   class WrongNumberOfPaisError < StandardError
   end
 
@@ -483,13 +492,50 @@ class CacheGenerator
   end
 end
 
+# skip when furou is present
 class KokuShiMuSouGrouper
-  def get_shantei
+  PATTERN = %w(東 南 西 北 白 發 中 一 九 ① ⑨ 1 9)
+  class << self
+    def get_shantei(monzen)
+      get_missing(monzen).count - 1
+    end
+
+    def get_missing(monzen)
+      monzen = monzen.scan(/[^\s|,]/) # duplicated logic in Pai
+      raise 'wrong number of pais' unless monzen.size.between?(13,14) # to do: move to final grouper
+      # first pass
+      missing = PATTERN.dup
+
+      remaining = PATTERN.inject(monzen) do |remaining, kokushi_char|
+        matched = delete_one(remaining, kokushi_char)# || remaining
+        next remaining unless matched
+        missing -= [kokushi_char]
+        matched
+      end
+
+      # second pass, remove the first matching
+      has_zyantou = PATTERN.detect do |kokushi_char|
+        matched = delete_one(remaining, kokushi_char)
+        remaining = matched if matched
+      end
+
+      has_zyantou ? missing : missing + %w(?) # ? represents any pai in the pattern for zyantou
+    end
+
+    def delete_one(characters, char_to_delete)
+      index = characters.index(char_to_delete)
+      return unless index
+      new_characters = characters.dup
+      new_characters.delete_at(index)
+      new_characters
+    end
   end
 end
 
+# skip when furou is present
 class ChiToiTuGrouper
-  def get_shantei
+  def get_shantei(characters)
+
   end
 end
 
