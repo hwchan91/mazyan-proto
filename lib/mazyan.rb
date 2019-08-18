@@ -200,7 +200,7 @@ class NumGrouper
 
     def combine_tallies(tally1, tally2)
       h = %w(mentu kouhou isolated).each_with_object({}) { |category, h| h[category] = tally1[category] + tally2[category] }
-      h["zyantou"] = tally1["zyantou"] && tally2["zyantou"]
+      h["zyantou"] = tally1["zyantou"] || tally2["zyantou"]
       h
     end
 
@@ -333,10 +333,11 @@ end
 
 class MonzenGrouper
   class << self
-    def group(pais)
+    def group(pais, return_one: true)
       tallies_per_suit = separated_pais(pais).map do |suit, numbers|
         grouper = suit == "字" ? ZihaiGrouper : NumGrouper
-        tallies = grouper.group(numbers)
+        tallies = grouper.group(numbers, return_one: return_one)
+        tallies = [tallies] if return_one # force to array sine return_one setting returns a non-array
         tallies.map { |tally| add_suit_to_tally(suit, tally) }
       end
       possibilities = get_permutations(tallies_per_suit)
@@ -391,7 +392,7 @@ end
 class GeneralGrouper
   class << self
     # for ease of testing, this nethod accepts an array of strings as the furou argument, a '*' must be appended to the end of the string to indicate ankan
-    def group(monzen: "", furou: [])
+    def group(monzen: "", furou: [], return_one: true)
       monzen_pais = Pai.convert_characters(monzen)
       furou_formations = furou.map do |furou_characters|
         ankan = furou_characters.include?('*')
@@ -400,19 +401,19 @@ class GeneralGrouper
         furou_characters = Pai.convert_characters(furou_characters)
         FurouIdentifier.identify(furou_characters, ankan: ankan)
       end
-      group_parsed(monzen: monzen_pais, furou: furou_formations)
+      group_parsed(monzen: monzen_pais, furou: furou_formations, return_one: return_one)
     end
 
     # this method requires the monzen argument to be an array of pais(hashes), and furou to be an array of furou formations(hashes)
-    def group_parsed(monzen: [], furou: [])
-      tallies = MonzenGrouper.group(monzen)
+    def group_parsed(monzen: [], furou: [], return_one: true)
+      tallies = MonzenGrouper.group(monzen, return_one: return_one)
       tallies.each { |tally| tally['mentu'] += furou }
       tallies
     end
 
     # accept characters
     def get_shantei(monzen: "", furou: [], return_one: true)
-      tallies = group(monzen: monzen, furou: furou)
+      tallies = group(monzen: monzen, furou: furou, return_one: return_one)
       get_shantei_and_best_formations_from_tallies(tallies, return_one: return_one)
     end
 
