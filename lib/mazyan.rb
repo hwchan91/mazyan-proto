@@ -390,6 +390,9 @@ class MonzenGrouper
 end
 
 class GeneralGrouper
+  class WrongNumberOfPaisError < StandardError
+  end
+
   class << self
     # for ease of testing, this nethod accepts an array of strings as the furou argument, a '*' must be appended to the end of the string to indicate ankan
     def group(monzen: "", furou: [], return_one: true)
@@ -406,18 +409,15 @@ class GeneralGrouper
 
     # this method requires the monzen argument to be an array of pais(hashes), and furou to be an array of furou formations(hashes)
     def group_parsed(monzen: [], furou: [], return_one: true)
+      raise WrongNumberOfPaisError unless monzen.size / 3 + furou.size == 4 && monzen.size % 3 != 0
       tallies = MonzenGrouper.group(monzen, return_one: return_one)
       tallies.each { |tally| tally['mentu'] += furou }
       tallies
     end
 
-    # accept characters
-    def get_shantei(monzen: "", furou: [], return_one: true)
+    # accept characters, returns shantei as first elem, the grouped formation(s) as second elem
+    def get_shantei_and_formations(monzen: "", furou: [], return_one: false)
       tallies = group(monzen: monzen, furou: furou, return_one: return_one)
-      get_shantei_and_best_formations_from_tallies(tallies, return_one: return_one)
-    end
-
-    def get_shantei_and_best_formations_from_tallies(tallies, return_one: true)
       scores = tallies.map { |t| get_shantei_from_tally(t) }
       min_score = scores.min
       indices_with_min_score = (0...scores.size).select { |i| scores[i] == min_score }
@@ -429,6 +429,12 @@ class GeneralGrouper
     def get_shantei_from_tally(tally)
       mentu, kouhou, zyantou = tally["mentu"].size, tally["kouhou"].size, tally["zyantou"] ? 1 : 0
       8 - 2 * mentu - [4 - mentu, kouhou - zyantou].min - zyantou
+    end
+
+    # a simplified method to just return shantei
+    def get_shantei(monzen: "", furou: [])
+      shantei, _ = get_shantei_and_formations(monzen: monzen, furou: furou, return_one: true)
+      shantei
     end
   end
 end
@@ -477,18 +483,13 @@ class CacheGenerator
   end
 end
 
-
-class Hand
-  def initialize(monzen, furou)
-
-  end
-
-  def display
+class KokuShiMuSouGrouper
+  def get_shantei
   end
 end
 
-class Mazyan
-  def self.display(monzen, furou = [])
+class ChiToiTuGrouper
+  def get_shantei
   end
 end
 
