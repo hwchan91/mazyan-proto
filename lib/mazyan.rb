@@ -188,10 +188,10 @@ class NumGrouper
       end
 
       num_of_tiles = numbers.size
-      return tally if num_of_tiles.zero?
+      return wrap(tally, return_one) if num_of_tiles.zero?
 
       first = numbers[0]
-      return tally_with_category(tally, "isolated", first) if num_of_tiles == 1
+      return wrap(tally_with_category(tally, "isolated", first), return_one) if num_of_tiles == 1
       return group_without_first(first, numbers, tally, return_one) if first_is_isolated?(first, numbers)
 
       tallies = self.const_get("FORMATIONS").each_with_object([]) do |formation, arr|
@@ -205,6 +205,10 @@ class NumGrouper
       tallies = remove_same(tallies)
 
       best_tally(tallies, return_one)
+    end
+
+    def wrap(tally, return_one)
+      [tally] unless return_one
     end
 
     def combine_tallies(tally1, tally2)
@@ -449,18 +453,18 @@ class CacheGenerator
 end
 
 class GeneralGrouper
-  attr_reader :monzen, :furou, :return_one, :shantei, :formations
+  attr_reader :menzen, :furou, :return_one, :shantei, :formations
 
-  def initialize(monzen: , furou: [], return_one: true)
-    @monzen = as_pais(monzen)
+  def initialize(menzen: , furou: [], return_one: true)
+    @menzen = as_pais(menzen)
     @furou = furou
     @return_one = return_one
     @shantei = nil
     @formations = nil
   end
 
-  def as_pais(monzen)
-    monzen.map { |m| as_pai(m) }
+  def as_pais(menzen)
+    menzen.map { |m| as_pai(m) }
   end
 
   def as_pai(input)
@@ -482,7 +486,7 @@ class GeneralGrouper
   def tallies
     return @tallies if @tallies
 
-    tallies = MonzenGrouper.group(monzen, return_one: return_one)
+    tallies = MonzenGrouper.group(menzen, return_one: return_one)
     tallies.each { |tally| tally['mentu'] += furou }
     @tallies = tallies
   end
@@ -496,10 +500,10 @@ end
 class KokuShiMuSouGrouper
   KOKUSHI_CHARACTERS = %w(東 南 西 北 白 發 中 一 九 ① ⑨ 1 9)
 
-  attr_reader :shantei, :machi, :unmatched_monzen, :matched_kokushi_characters
+  attr_reader :shantei, :machi, :unmatched_menzen, :matched_kokushi_characters
 
-  def initialize(monzen:)
-    @unmatched_monzen = monzen.map { |c| c.dup }
+  def initialize(menzen:)
+    @unmatched_menzen = menzen.map { |c| c.dup }
     @matched_kokushi_characters = []
     @shantei = nil
     @machi = nil
@@ -525,18 +529,18 @@ class KokuShiMuSouGrouper
   end
 
   def match_kokushi_char(kokushi_char)
-    index = unmatched_monzen.index(kokushi_char)
+    index = unmatched_menzen.index(kokushi_char)
     return unless index
-    unmatched_monzen.delete_at(index)
+    unmatched_menzen.delete_at(index)
     matched_kokushi_characters << kokushi_char
   end
 end
 
 class ChiToiTuGrouper
-  attr_accessor :monzen, :shantei, :machi
+  attr_accessor :menzen, :shantei, :machi
 
-  def initialize(monzen:)
-    @monzen = monzen
+  def initialize(menzen:)
+    @menzen = menzen
     @shantei = nil
     @machi = nil
   end
@@ -548,7 +552,7 @@ class ChiToiTuGrouper
   end
 
   def histogram
-    @histogram ||= monzen.inject({}) do |h, char|
+    @histogram ||= menzen.inject({}) do |h, char|
       h[char] = (h[char] || 0) + 1
       h
     end
@@ -556,9 +560,9 @@ class ChiToiTuGrouper
 end
 
 module RegularizeHelper
-  def as_array(monzen)
-    return monzen if monzen.class == Array
-    monzen.scan(/[^\s|,]/)
+  def as_array(menzen)
+    return menzen if menzen.class == Array
+    menzen.scan(/[^\s|,]/)
   end
 
   def as_formations(array)
@@ -569,18 +573,23 @@ module RegularizeHelper
     return group if group.class == Hash
     FurouIdentifier.string_into_formation(group)
   end
+
+  def into_number(input)
+    return input if input.class == Integer
+    Pai.convert_character(input)[:number]
+  end
 end
 
 class ShanteiCalculator
   include RegularizeHelper
 
-  attr_reader :monzen, :furou, :general_grouper,
+  attr_reader :menzen, :furou, :general_grouper,
     :kokushi_grouper, :chitoitu_grouper, :groupers, :shantei, :quick_find
 
   class WrongNumberOfPaisError < StandardError; end
 
-  def initialize(monzen:, furou: [], quick_find: true)
-    @monzen = as_array(monzen)
+  def initialize(menzen:, furou: [], quick_find: true)
+    @menzen = as_array(menzen)
     @furou = as_formations(furou)
     @quick_find = quick_find
   end
@@ -588,10 +597,10 @@ class ShanteiCalculator
   def run
     validate_pai_count
 
-    @general_grouper = GeneralGrouper.new(monzen: monzen, furou: @furou, return_one: quick_find)
+    @general_grouper = GeneralGrouper.new(menzen: menzen, furou: @furou, return_one: quick_find)
     if furou.empty?
-      @kokushi_grouper = KokuShiMuSouGrouper.new(monzen: monzen)
-      @chitoitu_grouper = ChiToiTuGrouper.new(monzen: monzen)
+      @kokushi_grouper = KokuShiMuSouGrouper.new(menzen: menzen)
+      @chitoitu_grouper = ChiToiTuGrouper.new(menzen: menzen)
     end
     @groupers = [@general_grouper, @kokushi_grouper, @chitoitu_grouper].compact
     groupers.each { |grouper| grouper.run }
@@ -600,22 +609,25 @@ class ShanteiCalculator
   end
 
   def validate_pai_count
-    raise WrongNumberOfPaisError unless monzen.size / 3 + furou.size == 4 && monzen.size % 3 != 0
+    raise WrongNumberOfPaisError unless menzen.size / 3 + furou.size == 4 && menzen.size % 3 != 0
   end
 end
 
 class YakuIdentifier
   include RegularizeHelper
 
-  attr_reader :monzen, :furou, :agari_hai, :tumo, :richi, :double_richi, :ipatu,
-    :rinshan, :chankan, :last_hai, :dora, :oya, :yaku, :formations
+  attr_reader :menzen, :furou, :agari_hai, :tumo, :richi, :double_richi, :ipatu,
+    :rinshan, :chankan, :first_jun, :last_hai, :dora_count, :aka_dora_count, :oya, :chanfon, :menfon, :yaku, :yakuman_yaku, :formations, :shantei_calc
 
+  class WrongNumberOfPaisError < StandardError; end
   class InvalidSituation < StandardError; end
   class NotAgariError < StandardError; end
 
-  # monzen arg must include the agari_hai in it as well
+  ZIHAI = %w(_ 東 南 西 北 白 發 中)
+
+  # menzen arg must include the agari_hai in it as well
   def initialize(
-    monzen:,
+    menzen:,
     agari_hai:,
     furou: [],
     tumo: false,
@@ -624,45 +636,62 @@ class YakuIdentifier
     ipatu: false,
     rinshan: false,
     chankan: false,
+    first_jun: false,
     last_hai: false,
-    dora: [],
-    oya: false
+    dora_count: 0,
+    aka_dora_count: 0,
+    oya: false,
+    chanfon: 1,
+    menfon: 1
     )
-    @monzen       = as_array(monzen)
-    @furou        = as_formations(furou)
-    @agari_hai    = agari_hai
-    @richi        = double_richi || richi
-    @double_richi = double_richi
-    @ipatu        = ipatsu
-    @tumo         = tumo
-    @rinshan      = rinshan
-    @chankan      = chankan
-    @last_hai     = last_hai
-    @dora         = dora
-    @oya          = oya
-    @formations   = []
-    @yaku         = []
+    @menzen         = as_array(menzen)
+    @furou          = as_formations(furou)
+    @agari_hai      = agari_hai
+    @richi          = double_richi || richi
+    @double_richi   = double_richi
+    @ipatu          = ipatu
+    @tumo           = tumo
+    @rinshan        = rinshan
+    @chankan        = chankan
+    @last_hai       = last_hai
+    @dora_count     = dora_count
+    @aka_dora_count = aka_dora_count
+    @oya            = oya
+    @chanfon        = into_number(chanfon)
+    @menfon         = into_number(menfon)
+    @yaku           = []
+    @yakuman_yaku   = []
   end
 
   def run
     validate
 
-    unless kokushi?
-      get_formations
-    end
+    first_jun_tumo?
+    return calculate if kokushi?
+
+    get_general_yaku
+    tanyao?
+    iisou?
+    return calculate if chitoitu?
+
+    yakuhai_yakuman_and_associated?
+    return calculate if yakuman_yaku.any? # wrong: need to check suuankou first
+
+    get_yaku_hai
+    get_menzenchin_yaku
   end
 
   def validate
     raise InvalidSituation if rinshan && chankan
     raise InvalidSituation if rinshan && !tumo
-    raise InvalidSituation if (richi || ipatu) && !is_monzenchin?
+    raise InvalidSituation if (richi || ipatu) && !is_menzenchin?
     raise InvalidSituation if !richi && ipatu
     validate_agari
   end
 
 
-  def is_monzenchin?
-    @is_monzenchin ||= @furou.empty? || @furou.all? { |f| is_ankan?(f) }
+  def is_menzenchin?
+    @is_menzenchin ||= @furou.empty? || @furou.all? { |f| is_ankan?(f) }
   end
 
   def is_ankan?(furou)
@@ -670,8 +699,8 @@ class YakuIdentifier
   end
 
   def validate_agari
-    shantei_calc = ShanteiCalculator.new(
-      monzen: monzen + [agari_hai],
+    @shantei_calc = ShanteiCalculator.new(
+      menzen: menzen + [agari_hai],
       furou: furou,
       quick_find: false
     )
@@ -679,14 +708,24 @@ class YakuIdentifier
     raise NotAgariError unless shantei_calc.shantei == -1
   end
 
-  def kokushi?
-    if shantei_calc.kokushi_grouper&.shantei == -1
-      @yaku << "国士無双"
+  def first_jun_tumo?
+    return unless first_jun && tumo
+    if oya
+      @yakuman_yaku << "天和"
+    else
+      @yakuman_yaku << "地和"
     end
   end
 
-  def formations
-    @formations ||= shantei_calc.general_grouper.formations
+  def kokushi?
+    return unless shantei_calc.kokushi_grouper&.shantei == -1
+    @yakuman_yaku << "国士無双"
+  end
+
+  def chitoitu?
+    return unless shantei_calc.chitoitu_grouper&.shantei == -1 &&
+      shantei_calc.general_grouper.shantei != -1
+    @yaku << "七対子"
   end
 
   def get_general_yaku
@@ -695,13 +734,145 @@ class YakuIdentifier
     @yaku << "一発" if ipatu
     @yaku << "嶺上開花" if rinshan
     @yaku << "搶槓" if chankan
-    @yaku << "門前清自摸和" if is_monzenchin? && tumo
+    @yaku << "門前清自摸和" if is_menzenchin? && tumo
     @yaku << "海底摸月" if last_hai && tumo
     @yaku << "河底撈魚" if last_hai && !tumo
+  end
+
+  def formations
+    @formations ||= shantei_calc.general_grouper.formations.map { |f| format_formation(f) }
+  end
+
+  def format_formation(formation)
+    {
+      mentu: formation['mentu'].map { |h| split_formation(h) },
+      zyantou: formation['kouhou'].map { |h| split_formation(h) }.first
+    }
+  end
+
+  def split_formation(h)
+    f = h[:formation]
+    {
+      suit: h[:suit],
+      type: f[0..-2],
+      number: f[-1].to_i
+    }
+  end
+
+  def _formation
+    @_formation ||= formations.first
+  end
+
+  def _mentu
+    @_mentu ||= _formation[:mentu]
+  end
+
+  def _zyantou
+    @_zyantou ||= _formation[:zyantou]
+  end
+
+  def all_suits
+    @all_suits ||= hais.map{ |h| h[:suit] }.uniq
+  end
+
+  def hais
+    @hais ||= shantei_calc.general_grouper.menzen
+  end
+
+  def tanyao?
+    return if all_suits.any? { |s| s == '字' } ||
+      (hais.map { |h| h[:number] } & [1, 9]).any?
+
+    @yaku << "断么九"
+  end
+
+  def iisou?
+    return if all_suits.count > 2
+
+    if all_suits.count == 2
+      return unless all_suits.include?('字')
+      @yaku << '混一色'
+    else
+      only_suit = all_suits.first
+      if only_suit == '字'
+        @yakuman_yaku << '字一色'
+      else
+        @yaku << "清一色"
+        chuurenboutou?
+      end
+    end
+
+    rouiisou?
+  end
+
+  def rouiisou?
+    return unless all_suits.include?("索")
+    uniq_hais = hais.uniq.map{ |hai| Pai.to_character(hai) }
+    return unless (uniq_hais - %w(2 3 4 6 8 発)).empty?
+    @yakuman_yaku << "緑一色"
+  end
+
+  # WRONG: should check 13 + 1
+  def chuurenboutou?
+    return unless is_menzenchin?
+    return unless hais.map{ |h| h[:number] }.sort.join("") == "1112345678999"
+    @yakuman_yaku << "九蓮宝燈"
+  end
+
+  def yakuhai_yakuman_and_associated?
+    numbers = _mentu.select { |g| g[:suit] == '字' }.map { |g| g[:number] }
+    return true if suusii?(numbers) || sangen?(numbers)
+    return unless _zyantou[:suit] == '字'
+
+    numbers << _zyantou[:number]
+    suusii?(numbers, with_zyantou: true)
+    sangen?(numbers, with_zyantou: true)
+  end
+
+  def suusii?(numbers, with_zyantou: false)
+    return unless (numbers & [1, 2, 3, 4]).count == 4
+    if with_zyantou
+      @yakuman_yaku << "小四喜"
+    else
+      @yakuman_yaku << "大四喜"
+    end
+  end
+
+  def sangen?(numbers, with_zyantou: false)
+    return unless (numbers & [5, 6, 7]).count == 3
+    if with_zyantou
+      @yaku << "小三元"
+    else
+      @yakuman_yaku << "大三元"
+    end
+  end
+
+  def get_yaku_hai
+    _mentu.each do |group|
+      @yaku << "役牌　#{ZIHAI[group[:number]]}" if yaku_hai?(group)
+    end
+  end
+
+  def yaku_hai?(group)
+    return false unless group[:suit] == '字'
+    [5,6,7, chanfon, menfon].include?(group[:number])
+  end
+
+
+  def get_menzenchin_yaku
+    return unless is_menzenchin?
+    # suuankou
+    # iipeikou
+    # ryanpeikou
+    # pinfu
+  end
+
+  def calculate
+    # to be implemented
   end
 end
 
 binding.pry
 
 # samples = CacheGenerator.get_combinations(max_tiles: 14).sample(10)
-# samples.each {|s| p s; puts "\n"; pp GeneralGrouper.group(monzen: s.join(""), furou: [], return_one: false); puts "\n\n\n" }
+# samples.each {|s| p s; puts "\n"; pp GeneralGrouper.group(menzen: s.join(""), furou: [], return_one: false); puts "\n\n\n" }
