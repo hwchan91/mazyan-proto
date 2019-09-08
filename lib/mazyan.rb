@@ -337,6 +337,12 @@ class FurouIdentifier
     formation = tally['mentu'].first
     { suit: suit, formation: formation }
   end
+
+  def self.string_into_formation(furou_characters)
+    ankan_marker = furou_characters.slice!('*')
+    furou_characters = Pai.convert_characters(furou_characters)
+    FurouIdentifier.identify(furou_characters, ankan: !!ankan_marker)
+  end
 end
 
 class MonzenGrouper
@@ -345,7 +351,7 @@ class MonzenGrouper
       tallies_per_suit = separated_pais(pais).map do |suit, numbers|
         grouper = suit == "字" ? ZihaiGrouper : NumGrouper
         tallies = grouper.group(numbers, return_one: return_one)
-        tallies = [tallies] if return_one # force to array sine return_one setting returns a non-array
+        tallies = [tallies] if return_one # force to array since return_one setting returns a non-array
         tallies.map { |tally| add_suit_to_tally(suit, tally) }
       end
       possibilities = get_permutations(tallies_per_suit)
@@ -397,57 +403,6 @@ class MonzenGrouper
   end
 end
 
-class GeneralGrouper
-  # to do: move this to the scope of the final grouper
-  class WrongNumberOfPaisError < StandardError
-  end
-
-  class << self
-    # for ease of testing, this nethod accepts an array of strings as the furou argument, a '*' must be appended to the end of the string to indicate ankan
-    def group(monzen: "", furou: [], return_one: true)
-      monzen_pais = Pai.convert_characters(monzen)
-      furou_formations = furou.map do |furou_characters|
-        ankan = furou_characters.include?('*')
-        furou_characters = furou_characters.gsub('*', '') if ankan
-
-        furou_characters = Pai.convert_characters(furou_characters)
-        FurouIdentifier.identify(furou_characters, ankan: ankan)
-      end
-      group_parsed(monzen: monzen_pais, furou: furou_formations, return_one: return_one)
-    end
-
-    # this method requires the monzen argument to be an array of pais(hashes), and furou to be an array of furou formations(hashes)
-    def group_parsed(monzen: [], furou: [], return_one: true)
-      raise WrongNumberOfPaisError unless monzen.size / 3 + furou.size == 4 && monzen.size % 3 != 0
-      tallies = MonzenGrouper.group(monzen, return_one: return_one)
-      tallies.each { |tally| tally['mentu'] += furou }
-      tallies
-    end
-
-    # accept characters, returns shantei as first elem, the grouped formation(s) as second elem
-    def get_shantei_and_formations(monzen: "", furou: [], return_one: false)
-      tallies = group(monzen: monzen, furou: furou, return_one: return_one)
-      scores = tallies.map { |t| get_shantei_from_tally(t) }
-      min_score = scores.min
-      indices_with_min_score = (0...scores.size).select { |i| scores[i] == min_score }
-      best = indices_with_min_score.map{ |i| tallies[i] }
-      formations = return_one ? best.first : best
-      [min_score, formations]
-    end
-
-    def get_shantei_from_tally(tally)
-      mentu, kouhou, zyantou = tally["mentu"].size, tally["kouhou"].size, tally["zyantou"] ? 1 : 0
-      8 - 2 * mentu - [4 - mentu, kouhou - zyantou].min - zyantou
-    end
-
-    # a simplified method to just return shantei
-    def get_shantei(monzen: "", furou: [])
-      shantei, _ = get_shantei_and_formations(monzen: monzen, furou: furou, return_one: true)
-      shantei
-    end
-  end
-end
-
 class CacheGenerator
   class << self
     def combinations(max_repeat: 3, max_tiles: 5, start_from: 1, up_to: 9, existing: [])
@@ -492,82 +447,154 @@ class CacheGenerator
   end
 end
 
-# skip when furou is present
-class KokuShiMuSouGrouper
-  PATTERN = %w(東 南 西 北 白 發 中 一 九 ① ⑨ 1 9)
-  class << self
-    def get_shantei(monzen)
-      get_missing(monzen).count - 1
-    end
+class GeneralGrouper
+  attr_reader :monzen, :furou, :return_one, :shantei, :formations
 
-    def get_missing(monzen)
-      monzen = monzen.scan(/[^\s|,]/) # duplicated logic in Pai
-      raise 'wrong number of pais' unless monzen.size.between?(13,14) # to do: move to final grouper
-      # first pass
-      missing = PATTERN.dup
+  def initialize(monzen: , furou: [], return_one: true)
+    @monzen = monzen
+    @furou = furou
+    @return_one = return_one
+    @shantei = nil
+    @formations = nil
+  end
 
-      remaining = PATTERN.inject(monzen) do |remaining, kokushi_char|
-        matched = delete_one(remaining, kokushi_char)# || remaining
-        next remaining unless matched
-        missing -= [kokushi_char]
-        matched
-      end
+  def run
+    scores = tallies.map { |t| get_shantei_from_tally(t) }
+    @shantei = min_score = scores.min
 
-      # second pass, remove the first matching
-      has_zyantou = PATTERN.detect do |kokushi_char|
-        matched = delete_one(remaining, kokushi_char)
-        remaining = matched if matched
-      end
+    indices_with_min_score = (0...scores.size).select { |i| scores[i] == min_score }
+    best = indices_with_min_score.map{ |i| tallies[i] }
+    @formations = return_one ? best.first : best
 
-      has_zyantou ? missing : missing + %w(?) # ? represents any pai in the pattern for zyantou; subject to change later
-    end
+    { shantei: @shantei, formations: @formations }
+  end
 
-    def delete_one(characters, char_to_delete)
-      index = characters.index(char_to_delete)
-      return unless index
-      new_characters = characters.dup
-      new_characters.delete_at(index)
-      new_characters
-    end
+  def tallies
+    return @tallies if @tallies
+
+    tallies = MonzenGrouper.group(monzen, return_one: return_one)
+    tallies.each { |tally| tally['mentu'] += furou }
+    @tallies = tallies
+  end
+
+  def get_shantei_from_tally(tally)
+    mentu, kouhou, zyantou = tally["mentu"].size, tally["kouhou"].size, tally["zyantou"] ? 1 : 0
+    8 - 2 * mentu - [4 - mentu, kouhou - zyantou].min - zyantou
   end
 end
 
-# skip when furou is present
+class KokuShiMuSouGrouper
+  KOKUSHI_CHARACTERS = %w(東 南 西 北 白 發 中 一 九 ① ⑨ 1 9)
+
+  attr_reader :shantei, :machi, :unmatched_monzen, :matched_kokushi_characters
+
+  def initialize(monzen:)
+    @unmatched_monzen = monzen.map { |c| c.dup }
+    @matched_kokushi_characters = []
+    @shantei = nil
+    @machi = nil
+  end
+
+  def run
+    # first pass
+    KOKUSHI_CHARACTERS.each do |kokushi_char|
+      match_kokushi_char(kokushi_char)
+    end
+
+    # second pass
+    has_zyantou = KOKUSHI_CHARACTERS.find do |kokushi_char|
+      match_kokushi_char(kokushi_char)
+    end
+
+    @machi = KOKUSHI_CHARACTERS - matched_kokushi_characters
+    unless has_zyantou
+      @machi << '?'
+    end
+
+    @shantei = @machi.count - 1
+  end
+
+  def match_kokushi_char(kokushi_char)
+    index = unmatched_monzen.index(kokushi_char)
+    return unless index
+    unmatched_monzen.delete_at(index)
+    matched_kokushi_characters << kokushi_char
+  end
+end
+
 class ChiToiTuGrouper
-  class << self
-    def get_shantei(monzen)
-      shantei, _ = get_shantei_and_isolated(monzen)
-      shantei
-    end
+  attr_accessor :monzen, :shantei, :machi
 
-    # subject to change
-    def get_missing(monzen)
-      shantei, missing = get_shantei_and_isolated(monzen)
-      raise 'not tenpai' unless shantei == 0
-      missing.first
-    end
+  def initialize(monzen:)
+    @monzen = monzen
+    @shantei = nil
+    @machi = nil
+  end
 
-    def get_shantei_and_isolated(monzen)
-      monzen = monzen.scan(/[^\s|,]/) # duplicated logic in Pai
-      histogram = get_histogram(monzen)
-      paired, isolated = histogram.partition { |char, count| count >= 2 }
-      [6 - paired.count, isolated.map(&:first)]
-    end
+  def run
+    paired, isolated = histogram.partition { |char, count| count >= 2 }
+    @shantei = 6 - paired.count
+    @machi = isolated.map(&:first)
+  end
 
-    def get_histogram(characters)
-      characters.inject({}) do |h, char|
-        h[char] = (h[char] || 0) + 1
-        h
-      end
+  def histogram
+    @histogram ||= monzen.inject({}) do |h, char|
+      h[char] = (h[char] || 0) + 1
+      h
     end
   end
 end
 
 class MazyanGrouper
+  attr_reader :monzen, :monzen_pais, :furou, :general_grouper, :kokushi_grouper, :chitoitu_grouper, :groupers
 
+  class WrongNumberOfPaisError < StandardError
+  end
+
+  def initialize(monzen:, furou: [])
+    @monzen = as_array(monzen)
+    @monzen_pais = as_pais(@monzen)
+    @furou = as_formations(furou)
+
+    validate
+
+    @general_grouper = GeneralGrouper.new(monzen: monzen_pais, furou: furou)
+    if furou.empty?
+      @kokushi_grouper = KokuShiMuSouGrouper.new(monzen: @monzen)
+      @chitoitu_grouper = ChiToiTuGrouper.new(monzen: @monzen)
+    end
+    @groupers = [@general_grouper, @kokushi_grouper, @chitoitu_grouper]
+  end
+
+  def run
+    groupers.each { |grouper| grouper.run }
+  end
+
+  private
+
+  def as_array(monzen)
+    return monzen unless monzen.class == String
+    monzen.scan(/[^\s|,]/)
+  end
+
+  def as_pais(monzen)
+    monzen.map { |character| Pai.convert_character(character) }
+  end
+
+  def as_formations(furou)
+    furou.map { |group| as_formation(group) }
+  end
+
+  def as_formation(group)
+    group.class == String ? Furou.string_into_formation(group) : group
+  end
+
+  def validate
+    raise WrongNumberOfPaisError unless monzen.size / 3 + furou.size == 4 && monzen.size % 3 != 0
+  end
 end
 
 binding.pry
 
-# samples = CacheGenerator.get_combinations(max_tiles: 9).sample(10)
-# samples.each {|s| p s; puts "\n"; p NumGrouper.group_from_cache(s); puts "\n\n\n" }
+# samples = CacheGenerator.get_combinations(max_tiles: 14).sample(10)
+# samples.each {|s| p s; puts "\n"; pp GeneralGrouper.group(monzen: s.join(""), furou: [], return_one: false); puts "\n\n\n" }
