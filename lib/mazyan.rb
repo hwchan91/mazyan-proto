@@ -33,6 +33,7 @@ class Pai
     end
 
     def convert_character(character)
+      return character unless character.class == String
       pai = lookup_table[character]
       raise InvalidCharacterError unless pai
       pai
@@ -451,11 +452,20 @@ class GeneralGrouper
   attr_reader :monzen, :furou, :return_one, :shantei, :formations
 
   def initialize(monzen: , furou: [], return_one: true)
-    @monzen = monzen
+    @monzen = as_pais(monzen)
     @furou = furou
     @return_one = return_one
     @shantei = nil
     @formations = nil
+  end
+
+  def as_pais(monzen)
+    monzen.map { |m| as_pai(m) }
+  end
+
+  def as_pai(input)
+    return input if input.class == Hash
+    Pai.convert_character(input)
   end
 
   def run
@@ -545,52 +555,149 @@ class ChiToiTuGrouper
   end
 end
 
-class MazyanGrouper
-  attr_reader :monzen, :monzen_pais, :furou, :general_grouper, :kokushi_grouper, :chitoitu_grouper, :groupers
-
-  class WrongNumberOfPaisError < StandardError
-  end
-
-  def initialize(monzen:, furou: [])
-    @monzen = as_array(monzen)
-    @monzen_pais = as_pais(@monzen)
-    @furou = as_formations(furou)
-
-    validate
-
-    @general_grouper = GeneralGrouper.new(monzen: monzen_pais, furou: furou)
-    if furou.empty?
-      @kokushi_grouper = KokuShiMuSouGrouper.new(monzen: @monzen)
-      @chitoitu_grouper = ChiToiTuGrouper.new(monzen: @monzen)
-    end
-    @groupers = [@general_grouper, @kokushi_grouper, @chitoitu_grouper]
-  end
-
-  def run
-    groupers.each { |grouper| grouper.run }
-  end
-
-  private
-
+module RegularizeHelper
   def as_array(monzen)
-    return monzen unless monzen.class == String
+    return monzen if monzen.class == Array
     monzen.scan(/[^\s|,]/)
   end
 
-  def as_pais(monzen)
-    monzen.map { |character| Pai.convert_character(character) }
-  end
-
-  def as_formations(furou)
-    furou.map { |group| as_formation(group) }
+  def as_formations(array)
+    array.map { |group| as_formation(group) }
   end
 
   def as_formation(group)
-    group.class == String ? Furou.string_into_formation(group) : group
+    return group if group.class == Hash
+    FurouIdentifier.string_into_formation(group)
+  end
+end
+
+class ShanteiCalculator
+  include RegularizeHelper
+
+  attr_reader :monzen, :furou, :general_grouper,
+    :kokushi_grouper, :chitoitu_grouper, :groupers, :shantei, :quick_find
+
+  class WrongNumberOfPaisError < StandardError; end
+
+  def initialize(monzen:, furou: [], quick_find: true)
+    @monzen = as_array(monzen)
+    @furou = as_formations(furou)
+    @quick_find = quick_find
+  end
+
+  def run
+    validate_pai_count
+
+    @general_grouper = GeneralGrouper.new(monzen: monzen, furou: @furou, return_one: quick_find)
+    if furou.empty?
+      @kokushi_grouper = KokuShiMuSouGrouper.new(monzen: monzen)
+      @chitoitu_grouper = ChiToiTuGrouper.new(monzen: monzen)
+    end
+    @groupers = [@general_grouper, @kokushi_grouper, @chitoitu_grouper].compact
+    groupers.each { |grouper| grouper.run }
+
+    @shantei = groupers.map{ |g| g.shantei }.min
+  end
+
+  def validate_pai_count
+    raise WrongNumberOfPaisError unless monzen.size / 3 + furou.size == 4 && monzen.size % 3 != 0
+  end
+end
+
+class YakuIdentifier
+  include RegularizeHelper
+
+  attr_reader :monzen, :furou, :agari_hai, :tumo, :richi, :double_richi, :ipatu,
+    :rinshan, :chankan, :last_hai, :dora, :oya, :yaku, :formations
+
+  class InvalidSituation < StandardError; end
+  class NotAgariError < StandardError; end
+
+  # monzen arg must include the agari_hai in it as well
+  def initialize(
+    monzen:,
+    agari_hai:,
+    furou: [],
+    tumo: false,
+    richi: false,
+    double_richi: false,
+    ipatu: false,
+    rinshan: false,
+    chankan: false,
+    last_hai: false,
+    dora: [],
+    oya: false
+    )
+    @monzen       = as_array(monzen)
+    @furou        = as_formations(furou)
+    @agari_hai    = agari_hai
+    @richi        = double_richi || richi
+    @double_richi = double_richi
+    @ipatu        = ipatsu
+    @tumo         = tumo
+    @rinshan      = rinshan
+    @chankan      = chankan
+    @last_hai     = last_hai
+    @dora         = dora
+    @oya          = oya
+    @formations   = []
+    @yaku         = []
+  end
+
+  def run
+    validate
+
+    unless kokushi?
+      get_formations
+    end
   end
 
   def validate
-    raise WrongNumberOfPaisError unless monzen.size / 3 + furou.size == 4 && monzen.size % 3 != 0
+    raise InvalidSituation if rinshan && chankan
+    raise InvalidSituation if rinshan && !tumo
+    raise InvalidSituation if (richi || ipatu) && !is_monzenchin?
+    raise InvalidSituation if !richi && ipatu
+    validate_agari
+  end
+
+
+  def is_monzenchin?
+    @is_monzenchin ||= @furou.empty? || @furou.all? { |f| is_ankan?(f) }
+  end
+
+  def is_ankan?(furou)
+    furou[:formation][0..1] == "暗槓"
+  end
+
+  def validate_agari
+    shantei_calc = ShanteiCalculator.new(
+      monzen: monzen + [agari_hai],
+      furou: furou,
+      quick_find: false
+    )
+    shantei_calc.run
+    raise NotAgariError unless shantei_calc.shantei == -1
+  end
+
+  def kokushi?
+    if shantei_calc.kokushi_grouper&.shantei == -1
+      @yaku << "国士無双"
+    end
+  end
+
+  def formations
+    @formations ||= shantei_calc.general_grouper.formations
+  end
+
+  def get_general_yaku
+    @yaku << "立直" if richi && !double_richi
+    @yaku << "W立直" if double_richi
+    @yaku << "一発" if ipatu
+    @yaku << "嶺上開花" if rinshan
+    @yaku << "搶槓" if chankan
+    @yaku << "門前清自摸和" if is_monzenchin? && tumo
+    @yaku << "海底摸月" if last_hai && tumo
+    @yaku << "河底撈魚" if last_hai && !tumo
   end
 end
 
