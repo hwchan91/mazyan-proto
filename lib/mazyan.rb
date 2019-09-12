@@ -665,20 +665,25 @@ class YakuIdentifier
 
   def run
     validate
+    @furou.map! { |h| split_formation(h) } # note: add a method to format formations and furou?
 
     first_jun_tumo?
     return calculate if kokushi?
 
+    # note: since chiroitu does not have formation, the following methods cannot expect a formation
     get_general_yaku
     tanyao?
     iisou?
     return calculate if chitoitu?
 
     yakuhai_yakuman_and_associated?
-    return calculate if yakuman_yaku.any? # wrong: need to check suuankou first
-
     get_yaku_hai
-    get_menzenchin_yaku
+
+    formations.each do |formation| # for testing only; to rix
+      ankou_yaku?(formation)
+      yaokyuu_yaku?(formation)
+      get_menzenchin_yaku(formation)
+    end
   end
 
   def validate
@@ -695,7 +700,7 @@ class YakuIdentifier
   end
 
   def is_ankan?(furou)
-    furou[:formation][0..1] == "暗槓"
+    furou[:type] == "暗槓"
   end
 
   def validate_agari
@@ -759,17 +764,15 @@ class YakuIdentifier
     }
   end
 
-  def _formation
-    @_formation ||= formations.first
-  end
-
-  def _mentu
-    @_mentu ||= _formation[:mentu]
-  end
-
-  def _zyantou
-    @_zyantou ||= _formation[:zyantou]
-  end
+  # def _formation
+  #   return @formation if @formation
+  #   if formations.size == 1
+  #     @formation = formations.first
+  #   else
+  #     @formation = formations.first # to change
+  #     # 11223344 / 11122334444 / 111222333 789 99 -> if sanshokudoujun, sanankotu - yes: then that, if no sanshoku, if ipei, then yes; else either
+  #   end
+  # end
 
   def all_suits
     @all_suits ||= hais.map{ |h| h[:suit] }.uniq
@@ -786,6 +789,7 @@ class YakuIdentifier
     @yaku << "断么九"
   end
 
+  # to do: refactor
   def iisou?
     return if all_suits.count > 2
 
@@ -812,14 +816,21 @@ class YakuIdentifier
     @yakuman_yaku << "緑一色"
   end
 
-  # WRONG: should check 13 + 1
   def chuurenboutou?
     return unless is_menzenchin?
-    return unless hais.map{ |h| h[:number] }.sort.join("") == "1112345678999"
+    numbers = hais.map{ |h| h[:number] }
+    match = [1,1,1,2,3,4,5,6,7,8,9,9,9].all? do |i|
+      next false unless matched_index = numbers.index(i)
+      numbers.delete_at(matched_index)
+    end
+    return unless match
     @yakuman_yaku << "九蓮宝燈"
   end
 
   def yakuhai_yakuman_and_associated?
+    _mentu = formations.first[:mentu] # ?
+    _zyantou = formations.first[:zyantou]
+
     numbers = _mentu.select { |g| g[:suit] == '字' }.map { |g| g[:number] }
     return true if suusii?(numbers) || sangen?(numbers)
     return unless _zyantou[:suit] == '字'
@@ -848,6 +859,7 @@ class YakuIdentifier
   end
 
   def get_yaku_hai
+    _mentu = @formations.first[:mentu] #?
     _mentu.each do |group|
       @yaku << "役牌　#{ZIHAI[group[:number]]}" if yaku_hai?(group)
     end
@@ -858,20 +870,94 @@ class YakuIdentifier
     [5,6,7, chanfon, menfon].include?(group[:number])
   end
 
-
-  def get_menzenchin_yaku
-    return unless is_menzenchin?
-    # suuankou
-    # iipeikou
-    # ryanpeikou
-    # pinfu
+  # wrong: need to check not completing the ankou using agari hai
+  def ankou_yaku?(formation)
+    case get_ankou_count(formation)
+    when 4
+      @yakuman_yaku << '四暗刻'
+    when 3
+      @yaku << '三暗刻'
+    end
   end
+
+  def get_ankou_count(formation)
+    kotu_count_in_mentu = formation[:mentu].count { |group| %w(刻 暗槓).include?(group[:type]) }
+    kotu_count_in_furou = furou.count { |group| group[:type] == '刻' }
+    kotu_count_in_mentu - kotu_count_in_furou
+  end
+
+  def yaokyuu_yaku?(formation)
+    zihai_groups, number_groups = (formation[:mentu] + [formation[:zyantou]]).partition { |group| group[:suit] == '字' }
+    zihai_presence = zihai_groups.any?
+
+    same_groups, jun_groups = number_groups.partition { |group| %w(対 刻 暗槓 大明槓).include?(group[:type]) }
+    return unless same_groups.all? { |group| [1, 9].include?(group[:number]) }
+
+    if jun_groups.empty?
+      add_routou_yaku(zihai_presence)
+    else
+      return unless jun_groups.all? { |group| [1, 7].include?(group[:number]) }
+      add_chantaiyaokyuu_yaku(zihai_presence)
+    end
+  end
+
+  def add_routou_yaku(zihai_presence)
+    if zihai_presence
+      @yaku << '混老頭'
+    else
+      @yakuman_yaku << '清老頭'
+    end
+  end
+
+  def add_chantaiyaokyuu_yaku(zihai_presence)
+    if zihai_presence
+      @yaku << '混全帯么九'
+    else
+      @yaku << '純全帯么九'
+    end
+  end
+
+  def get_menzenchin_yaku(formation)
+    return unless is_menzenchin?
+    peikou_yaku?(formation)
+    pinfu?(formation)
+  end
+
+  def peikou_yaku?(formation)
+    jun_groups = formation[:mentu].select { |group| group[:type] == '順' }
+
+    case jun_groups.uniq.count
+    when 2
+      @yaku << '二盃口'
+    when 3
+      @yaku << '一盃口'
+    end
+  end
+
+  def pinfu?(formation)
+    return if yaku_hai?(formation[:zyantou])
+    return unless formation[:mentu].all? { |group| group[:type] == '順' }
+    agari = Pai.convert_character(agari_hai)
+    suit, number = agari[:suit], agari[:number]
+    posssible_start_numbers = [number - 2, number, number + 2].select { |i| i >= 1 && i <= 9 }
+    return unless formation[:mentu].any? { |group| group[:suit] == suit && posssible_start_numbers.include?(group[:number]) }
+    @yaku << '平和'
+  end
+
+  # rest:  sankantu suukantu toitoi ikkituukan sanshoku
 
   def calculate
     # to be implemented
   end
 end
 
+# "字" => %w(東 南 西 北 白 發 中),
+# "萬" => %w(一 二 三 四 五 六 七 八 九),
+# "筒" => %w(① ② ③ ④ ⑤ ⑥ ⑦ ⑧ ⑨),
+# "索" => %w(1 2 3 4 5 6 7 8 9)
+
+# y = YakuIdentifier.new(menzen: "1232343456788", agari_hai:"5")
+# y.run
 binding.pry
 
 # samples = CacheGenerator.get_combinations(max_tiles: 14).sample(10)
