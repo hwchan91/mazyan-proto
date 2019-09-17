@@ -832,15 +832,33 @@ class YakuIdentifier
     @yakuman_yaku << "九蓮宝燈"
   end
 
+  def zihais
+    @zihais ||= hais.select { |h| h[:suit] == '字'}
+  end
+
+  def zihais_tally
+    @zihais_tally ||= zihais.map{ |h| h[:number] }.inject({}) do |h, num|
+      h[num] = (h[num] || 0) + 1
+      h
+    end
+  end
+
   def yakuhai_yakuman_and_associated?
-    _mentu = formations.first[:mentu] # ?
-    _zyantou = formations.first[:zyantou]
+    zihai_mentu_numbers = []
+    zihai_zyantou_number = nil
+    zihais_tally.each do |num, count|
+      if count >= 3
+        zihai_mentu_numbers << num
+      else
+        zihai_zyantou_number = num
+      end
+    end
 
-    numbers = _mentu.select { |g| g[:suit] == '字' }.map { |g| g[:number] }
+    numbers = zihai_mentu_numbers.dup
     return true if suusii?(numbers) || sangen?(numbers)
-    return unless _zyantou[:suit] == '字'
+    return unless zihai_zyantou_number
 
-    numbers << _zyantou[:number]
+    numbers << zihai_zyantou_number
     suusii?(numbers, with_zyantou: true)
     sangen?(numbers, with_zyantou: true)
   end
@@ -864,7 +882,7 @@ class YakuIdentifier
   end
 
   def get_yaku_hai
-    _mentu = @formations.first[:mentu] #?
+    _mentu = formations.first[:mentu] #?
     _mentu.each do |group|
       @yaku << "役牌　#{ZIHAI[group[:number]]}" if yaku_hai?(group)
     end
@@ -886,16 +904,14 @@ class YakuIdentifier
 
   def get_ankou_count(formation)
     # if machi_hai is zyantou, then 4 no matter tumou or not; if machi_hai is kotu/not zyantou, then 4 only if tumo
-    kotu_count_in_mentu = formation[:mentu].count { |group| %w(刻 暗槓).include?(group[:type]) }
+    kotu_in_mentu = formation[:mentu].select { |group| %w(刻 暗槓).include?(group[:type]) }
     if !tumo
       machi_hai = Pai.convert_character(machi)
       zyantou = formation[:zyantou]
-      unless zyantou[:suit] == machi_hai[:suit] && zyantou[:number] == machi_hai[:number]
-        kotu_count_in_mentu -= 1
-      end
+      kotu_in_mentu.reject! { |kotu| kotu[:suit] == machi_hai[:suit] && kotu[:number] == machi_hai[:number] }
     end
     kotu_count_in_furou = furou.count { |group| group[:type] == '刻' }
-    kotu_count_in_mentu - kotu_count_in_furou
+    kotu_in_mentu.count - kotu_count_in_furou
   end
 
   def chantaiyaokyuu_yaku?(formation)
@@ -958,7 +974,7 @@ class YakuIdentifier
 end
 
 class FormationYakuIdentifier
-  def initialize
+  def initialize(mentu:, zyantou:, machi_hai:, furou: , routou: false)
   end
 end
 
@@ -967,7 +983,7 @@ end
 # "筒" => %w(① ② ③ ④ ⑤ ⑥ ⑦ ⑧ ⑨),
 # "索" => %w(1 2 3 4 5 6 7 8 9)
 
-# y = YakuIdentifier.new(menzen: "一一一九九九①①①1178", machi:"9")
+# y = YakuIdentifier.new(menzen: "東東東南南南西西西北北99", machi:"9")
 # y.run
 binding.pry
 
