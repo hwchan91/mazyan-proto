@@ -617,13 +617,16 @@ class YakuIdentifier
   include RegularizeHelper
 
   attr_reader :menzen, :furou, :machi, :tumo, :richi, :double_richi, :ipatu,
-    :rinshan, :chankan, :first_jun, :last_hai, :dora_count, :aka_dora_count, :oya, :chanfon, :menfon, :yaku, :yakuman_yaku, :formations, :shantei_calc
+    :rinshan, :chankan, :first_jun, :last_hai, :dora_count, :aka_dora_count, :oya, :chanfon, :zifon,
+    :yaku, :yakuman_yaku, :formations, :shantei_calc, :general_grouper, :kokushi_grouper, :chitoitu_grouper,
+    :hais, :zi_hais, :number_hais, :numbers, :all_suits
 
   class WrongNumberOfPaisError < StandardError; end
   class InvalidSituation < StandardError; end
   class NotAgariError < StandardError; end
 
   ZIHAI = %w(_ 東 南 西 北 白 發 中)
+  ROUIUSOU_HAIS = Pai.convert_characters("2 3 4 6 8 發")
 
   # menzen arg must include the machi in it as well
   def initialize(
@@ -642,7 +645,7 @@ class YakuIdentifier
     aka_dora_count: 0,
     oya: false,
     chanfon: 1,
-    menfon: 1
+    zifon: 1
     )
     @menzen         = as_array(menzen)
     @furou          = as_formations(furou)
@@ -658,14 +661,14 @@ class YakuIdentifier
     @aka_dora_count = aka_dora_count
     @oya            = oya
     @chanfon        = into_number(chanfon)
-    @menfon         = into_number(menfon)
+    @zifon         = into_number(zifon)
     @yaku           = []
     @yakuman_yaku   = []
   end
 
   def run
     validate
-    @furou.map! { |h| split_formation(h) } # note: add a method to format formations and furou?
+    prepare_helpers
 
     first_jun_tumo?
     return calculate if kokushi?
@@ -673,10 +676,12 @@ class YakuIdentifier
     # note: since chiroitu does not have formation, the following methods cannot expect a formation
     get_general_yaku
     tanyao?
-    iisou?
     routou_yaku?
+    iisou?
     return calculate if chitoitu? # WRONG: chitoitu can also have honchuntaiyaokyuu yaku
 
+    rouiisou?
+    chuurenboutou?
     yakuhai_yakuman_and_associated?
     get_yaku_hai
 
@@ -714,39 +719,19 @@ class YakuIdentifier
     raise NotAgariError unless shantei_calc.shantei == -1
   end
 
-  def first_jun_tumo?
-    return unless first_jun && tumo
-    if oya
-      @yakuman_yaku << "天和"
-    else
-      @yakuman_yaku << "地和"
-    end
-  end
+  def prepare_helpers
+    @general_grouper = shantei_calc.general_grouper
+    @kokushi_grouper = shantei_calc.kokushi_grouper
+    @chitoitu_grouper = shantei_calc.chitoitu_grouper
 
-  def kokushi?
-    return unless shantei_calc.kokushi_grouper&.shantei == -1
-    @yakuman_yaku << "国士無双"
-  end
+    @hais = general_grouper.menzen + general_grouper.furou.map { |h| h[:hais] }.flatten
+    @zi_hais, @number_hais = @hais.partition { |hai| hai[:suit] == '字' }
+    @numbers = number_hais.map { |hai| hai[:number] }
+    @all_suits = hais.map{ |h| h[:suit] }.uniq
 
-  def chitoitu?
-    return unless shantei_calc.chitoitu_grouper&.shantei == -1 &&
-      shantei_calc.general_grouper.shantei != -1
-    @yaku << "七対子"
-  end
+    @furou.map! { |h| split_formation(h) }
 
-  def get_general_yaku
-    @yaku << "立直" if richi && !double_richi
-    @yaku << "W立直" if double_richi
-    @yaku << "一発" if ipatu
-    @yaku << "嶺上開花" if rinshan
-    @yaku << "搶槓" if chankan
-    @yaku << "門前清自摸和" if is_menzenchin? && tumo
-    @yaku << "海底摸月" if last_hai && tumo
-    @yaku << "河底撈魚" if last_hai && !tumo
-  end
-
-  def formations
-    @formations ||= shantei_calc.general_grouper.formations.map { |f| format_formation(f) }
+    @formations = general_grouper.formations.map { |f| format_formation(f) }
   end
 
   def format_formation(formation)
@@ -765,79 +750,85 @@ class YakuIdentifier
     }
   end
 
-  # def _formation
-  #   return @formation if @formation
-  #   if formations.size == 1
-  #     @formation = formations.first
-  #   else
-  #     @formation = formations.first # to change
-  #     # 11223344 / 11122334444 / 111222333 789 99 -> if sanshokudoujun, sanankotu - yes: then that, if no sanshoku, if ipei, then yes; else either
-  #   end
-  # end
-
-  def all_suits
-    @all_suits ||= hais.map{ |h| h[:suit] }.uniq
+  def first_jun_tumo?
+    return unless first_jun && tumo
+    if oya
+      @yakuman_yaku << "天和"
+    else
+      @yakuman_yaku << "地和"
+    end
   end
 
-  def hais
-    @hais ||= general_grouper.menzen + general_grouper.furou.map { |h| h[:hais] }.flatten
+  def kokushi?
+    return unless kokushi_grouper&.shantei == -1
+    @yakuman_yaku << "国士無双"
   end
 
-  def general_grouper
-    shantei_calc.general_grouper
+  def chitoitu?
+    return unless chitoitu_grouper&.shantei == -1 && general_grouper.shantei != -1
+    @yaku << "七対子"
+  end
+
+  def get_general_yaku
+    @yaku << "立直" if richi && !double_richi
+    @yaku << "W立直" if double_richi
+    @yaku << "一発" if ipatu
+    @yaku << "嶺上開花" if rinshan
+    @yaku << "搶槓" if chankan
+    @yaku << "門前清自摸和" if is_menzenchin? && tumo
+    @yaku << "海底摸月" if last_hai && tumo
+    @yaku << "河底撈魚" if last_hai && !tumo
   end
 
   def tanyao?
-    return if all_suits.any? { |s| s == '字' } ||
-      (hais.map { |h| h[:number] } & [1, 9]).any?
-
+    return if zi_hais.any? || (numbers & [1, 9]).any?
     @yaku << "断么九"
   end
 
-  # to do: refactor
-  def iisou?
-    return if all_suits.count > 2
-
-    if all_suits.count == 2
-      return unless all_suits.include?('字')
-      @yaku << '混一色'
+  def routou_yaku?
+    return unless (numbers - [1, 9]).empty?
+    @routou_yaku = true
+    if zi_hais.any?
+      @yaku << '混老頭'
     else
-      only_suit = all_suits.first
-      if only_suit == '字'
+      @yakuman_yaku << '清老頭'
+    end
+  end
+
+  def iisou?
+    case all_suits.count
+    when 2
+      return if zi_hais.empty?
+      @yaku << '混一色'
+    when 1
+      if zi_hais.any?
         @yakuman_yaku << '字一色'
       else
         @yaku << "清一色"
-        chuurenboutou?
       end
     end
-
-    rouiisou?
   end
 
+  # maybe its more efficient to compare characters than hashes...
   def rouiisou?
-    return unless all_suits.include?("索")
-    uniq_hais = hais.uniq.map{ |hai| Pai.to_character(hai) }
-    return unless (uniq_hais - %w(2 3 4 6 8 発)).empty?
+    return unless (hais - ROUIUSOU_HAIS).empty?
     @yakuman_yaku << "緑一色"
   end
 
   def chuurenboutou?
-    return unless is_menzenchin?
-    numbers = hais.map{ |h| h[:number] }
+    return unless is_menzenchin? && zi_hais.empty? && all_suits.count == 1
+    n = numbers.clone
+    # note: cannot use arr1 - arr2 as it deletes all duplicates
     match = [1,1,1,2,3,4,5,6,7,8,9,9,9].all? do |i|
-      next false unless matched_index = numbers.index(i)
-      numbers.delete_at(matched_index)
+      next false unless matched_index = n.index(i)
+      n.delete_at(matched_index)
     end
     return unless match
     @yakuman_yaku << "九蓮宝燈"
   end
 
-  def zihais
-    @zihais ||= hais.select { |h| h[:suit] == '字'}
-  end
-
   def zihais_tally
-    @zihais_tally ||= zihais.map{ |h| h[:number] }.inject({}) do |h, num|
+    @zihais_tally ||= zi_hais.map { |h| h[:number] }.inject({}) do |h, num|
       h[num] = (h[num] || 0) + 1
       h
     end
@@ -890,7 +881,7 @@ class YakuIdentifier
 
   def yaku_hai?(group)
     return false unless group[:suit] == '字'
-    [5,6,7, chanfon, menfon].include?(group[:number])
+    [5,6,7, chanfon, zifon].include?(group[:number])
   end
 
   def ankou_yaku?(formation)
@@ -925,17 +916,6 @@ class YakuIdentifier
       @yaku << '混全帯么九'
     else
       @yaku << '純全帯么九'
-    end
-  end
-
-  def routou_yaku?
-    zi_hais, number_hais = hais.partition { |h| h[:suit] == '字' }
-    return unless number_hais.all? { |h| [1, 9].include?(h[:number]) }
-    @routou_yaku = true
-    if zi_hais.any?
-      @yaku << '混老頭'
-    else
-      @yakuman_yaku << '清老頭'
     end
   end
 
@@ -974,7 +954,12 @@ class YakuIdentifier
 end
 
 class FormationYakuIdentifier
-  def initialize(mentu:, zyantou:, machi_hai:, furou: , routou: false)
+  def initialize(mentu:, zyantou:, machi_hai:, furou: [], tumo: false, routou: false)
+    @mentu = mentu
+    @zyantou = zyantou
+    @machi_hai = machi_hai
+    @furou = furou
+    @routou = routou
   end
 end
 
@@ -984,7 +969,9 @@ end
 # "索" => %w(1 2 3 4 5 6 7 8 9)
 
 # y = YakuIdentifier.new(menzen: "東東東南南南西西西北北99", machi:"9")
-# y.run
+# y = YakuIdentifier.new(menzen: "2223334446668", machi:"8")
+y = YakuIdentifier.new(menzen: "1113345678999", machi:"2")
+y.run
 binding.pry
 
 # samples = CacheGenerator.get_combinations(max_tiles: 14).sample(10)
