@@ -835,21 +835,14 @@ class YakuIdentifier
   end
 
   def yakuhai_yakuman_and_associated?
-    zihai_mentu_numbers = []
-    zihai_zyantou_number = nil
-    zihais_tally.each do |num, count|
-      if count >= 3
-        zihai_mentu_numbers << num
-      else
-        zihai_zyantou_number = num
-      end
-    end
-
-    numbers = zihai_mentu_numbers.dup
+    numbers = zihai_mentu.map { |m| m[:number] }.dup
+    return unless numbers.any?
     return true if suusii?(numbers) || sangen?(numbers)
-    return unless zihai_zyantou_number
 
-    numbers << zihai_zyantou_number
+    zyantou = formations.first[:zyantou]
+    return unless zyantou[:suit] == '字'
+
+    numbers << zyantou[:number]
     suusii?(numbers, with_zyantou: true)
     sangen?(numbers, with_zyantou: true)
   end
@@ -872,16 +865,24 @@ class YakuIdentifier
     end
   end
 
-  def get_yaku_hai
-    _mentu = formations.first[:mentu] #?
-    _mentu.each do |group|
-      @yaku << "役牌　#{ZIHAI[group[:number]]}" if yaku_hai?(group)
-    end
+  def zihai_mentu
+    @zihai_mentu ||= formations.first[:mentu].select { |m| m[:suit] == '字' }
   end
 
-  def yaku_hai?(group)
-    return false unless group[:suit] == '字'
-    [5,6,7, chanfon, zifon].include?(group[:number])
+
+  def get_yaku_hai
+    if zihai_mentu.detect { |m| m[:number] == chanfon }
+      @yaku << "場風　#{ZIHAI[chanfon]}"
+    end
+
+    if zihai_mentu.detect { |m| m[:number] == zifon }
+      @yaku << "自風　#{ZIHAI[zifon]}"
+    end
+
+    zihai_mentu.each do |m|
+      next unless [5, 6, 7].include?(m[:number])
+      @yaku << "役牌　#{ZIHAI[m[:number]]}"
+    end
   end
 
   def ankou_yaku?(formation)
@@ -946,6 +947,11 @@ class YakuIdentifier
     @yaku << '平和'
   end
 
+  def yaku_hai?(group)
+    return false unless group[:suit] == '字'
+    [5,6,7, chanfon, zifon].include?(group[:number])
+  end
+
   # rest:  sankantu suukantu toitoi ikkituukan sanshoku
 
   def calculate
@@ -968,9 +974,10 @@ end
 # "筒" => %w(① ② ③ ④ ⑤ ⑥ ⑦ ⑧ ⑨),
 # "索" => %w(1 2 3 4 5 6 7 8 9)
 
-# y = YakuIdentifier.new(menzen: "東東東南南南西西西北北99", machi:"9")
+# y = YakuIdentifier.new(menzen: "東東東南南南西西西北北99", machi:"9", chanfon: 2)
+y = YakuIdentifier.new(menzen: "白白白發發發中中中北北99", machi:"9", chanfon: 2)
 # y = YakuIdentifier.new(menzen: "2223334446668", machi:"8")
-y = YakuIdentifier.new(menzen: "1113345678999", machi:"2")
+# y = YakuIdentifier.new(menzen: "1113345678999", machi:"2")
 y.run
 binding.pry
 
