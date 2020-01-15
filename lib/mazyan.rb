@@ -662,8 +662,8 @@ class YakuIdentifier
   class InvalidSituation < StandardError; end
   class NotAgariError < StandardError; end
 
-  ZIHAI = %w(_ 東 南 西 北 白 發 中)
-  ROUIUSOU_HAIS = Pai.convert_characters("2 3 4 6 8 發")
+  ZIHAI = %w(東 南 西 北 白 發 中)
+  ROUIUSOU_HAIS = %w(2 3 4 6 8 發)
 
   # menzen arg must include the machi in it as well
   def initialize(
@@ -789,9 +789,24 @@ class YakuIdentifier
     { name: "字一色", requirements: [:no_number_hais] },
     { name: "清一色", requirements: [:same_suit_numbers, :no_zi_hais] },
     { name: "混一色", requirements: [:same_suit_numbers], mutually_exclusive: ["清一色"] },
+    { name: "大四喜", requirements: [:has_three_東, :has_three_南, :has_three_西, :has_three_北] },
+    { name: "小四喜", requirements: [:has_two_東, :has_two_南, :has_two_西, :has_two_北], mutually_exclusive: ["大四喜", "七対子"] },# hacky, another way is to split this into 4 rules; or to write a dedicated method for this
+    { name: "大三元", requirements: [:has_three_白, :has_three_發, :has_three_中] },
+    { name: "小三元", requirements: [:has_two_白, :has_two_發, :has_two_中], mutually_exclusive: ["大三元", "七対子"] },
+    { name: "役牌 白", requirements: [:has_three_白] },
+    { name: "役牌 發", requirements: [:has_three_發] },
+    { name: "役牌 中", requirements: [:has_three_中] },
+    { name: "場風", requirements: [:is_chanfon] },
+    { name: "自風", requirements: [:is_zifon] },
+    { name: "純正九蓮宝燈", requirements: [:is_menzenchin?, :no_zi_hais, :same_suit_numbers, :jun_sei_chuu_ren_bou_tou?]},
+    { name: "九蓮宝燈", requirements: [:is_menzenchin?, :no_zi_hais, :same_suit_numbers, :chuu_ren_bou_tou?], mutually_exclusive: ["純正九蓮宝燈"]},
+    { name: "緑一色", requirements: [:rou_ii_sou?] }
+
   ]
 
   def get_yaku
+    genereate_yaku_hai_methods
+
     yaku = []
     YAKU_RULES.each do |rule|
       next if rule[:mutually_exclusive] && (yaku & rule[:mutually_exclusive]).any?
@@ -814,27 +829,6 @@ class YakuIdentifier
       general_grouper.shantei != -1 # or else ryanpeikou
   end
 
-  # def kokushi?
-  #   return unless kokushi_grouper&.shantei == -1
-  #   @yakuman_yaku << "国士無双"
-  # end
-
-  # def chitoitu?
-  #   return unless chitoitu_grouper&.shantei == -1 && general_grouper.shantei != -1 # or else ryanpeikou
-  #   @yaku << "七対子"
-  # end
-
-  # def get_general_yaku
-  #   @yaku << "立直" if richi && !double_richi
-  #   @yaku << "W立直" if double_richi
-  #   @yaku << "一発" if ipatu
-  #   @yaku << "嶺上開花" if rinshan
-  #   @yaku << "搶槓" if chankan
-  #   @yaku << "門前清自摸和" if is_menzenchin? && tumo
-  #   @yaku << "海底摸月" if last_hai && tumo
-  #   @yaku << "河底撈魚" if last_hai && !tumo
-  # end
-
   def no_yaokyu
     @no_yaokyu ||= (numbers & [1, 9]).empty?
   end
@@ -855,110 +849,65 @@ class YakuIdentifier
     @same_suit_numbers ||= number_hais.map{|h| h[:suit]}.uniq.count <= 1
   end
 
-  # def tanyao?
-  #   return if zi_hais.any? || (numbers & [1, 9]).any?
-  #   @yaku << "断么九"
-  # end
+  def genereate_yaku_hai_methods
+    ZIHAI.each do |zihai|
+      instance_eval <<EOS
+        def has_three_#{zihai}
+          zi_hais_tally["#{zihai}"] >= 3
+        end
 
-  # def routou_yaku?
-  #   return unless (numbers - [1, 9]).empty?
-  #   @routou_yaku = true
-  #   if zi_hais.any?
-  #     @yaku << '混老頭'
-  #   else
-  #     @yakuman_yaku << '清老頭'
-  #   end
-  # end
-
-  # def iisou?
-  #   case all_suits.count
-  #   when 2
-  #     return if zi_hais.empty?
-  #     @yaku << '混一色'
-  #   when 1
-  #     if zi_hais.any?
-  #       @yakuman_yaku << '字一色'
-  #     else
-  #       @yaku << "清一色"
-  #     end
-  #   end
-  # end
-
-  # maybe its more efficient to compare characters than hashes...
-  def rouiisou?
-    return unless (hais - ROUIUSOU_HAIS).empty?
-    @yakuman_yaku << "緑一色"
-  end
-
-  def chuurenboutou?
-    return unless is_menzenchin? && zi_hais.empty? && all_suits.count == 1
-    n = numbers.clone
-    # note: cannot use arr1 - arr2 as it deletes all duplicates
-    match = [1,1,1,2,3,4,5,6,7,8,9,9,9].all? do |i|
-      next false unless matched_index = n.index(i)
-      n.delete_at(matched_index)
-    end
-    return unless match
-    @yakuman_yaku << "九蓮宝燈"
-  end
-
-  def zihais_tally
-    @zihais_tally ||= zi_hais.map { |h| h[:number] }.inject({}) do |h, num|
-      h[num] = (h[num] || 0) + 1
-      h
+        def has_two_#{zihai}
+          zi_hais_tally["#{zihai}"] >= 2
+        end
+EOS
     end
   end
 
-  def yakuhai_yakuman_and_associated?
-    numbers = zihai_mentu.map { |m| m[:number] }.dup
-    return unless numbers.any?
-    return true if suusii?(numbers) || sangen?(numbers)
-
-    zyantou = formations.first[:zyantou]
-    return unless zyantou[:suit] == '字'
-
-    numbers << zyantou[:number]
-    suusii?(numbers, with_zyantou: true)
-    sangen?(numbers, with_zyantou: true)
-  end
-
-  def suusii?(numbers, with_zyantou: false)
-    return unless (numbers & [1, 2, 3, 4]).count == 4
-    if with_zyantou
-      @yakuman_yaku << "小四喜"
-    else
-      @yakuman_yaku << "大四喜"
+  def zi_hais_tally
+    @zi_hais_tally ||= ZIHAI.inject({}) { |h, hai| h.tap { h[hai] = 0 } }.tap do |h|
+      zi_hais.each do |hai|
+        h[hai[:character]] += 1
+      end
     end
   end
 
-  def sangen?(numbers, with_zyantou: false)
-    return unless (numbers & [5, 6, 7]).count == 3
-    if with_zyantou
-      @yaku << "小三元"
-    else
-      @yakuman_yaku << "大三元"
+  def is_chanfon
+    send "has_three_#{ZIHAI[chanfon]}"
+  end
+
+  def is_zifon
+    send "has_three_#{ZIHAI[zifon]}"
+  end
+
+  def rou_ii_sou?
+    (hais.map { |h| h[:character] } - ROUIUSOU_HAIS).empty?
+  end
+
+  def jun_sei_chuu_ren_bou_tou?
+    chuu_ren_bou_tou? &&
+      chuu_ren_bou_tou_tally.first == machi[:number]
+  end
+
+  def chuu_ren_bou_tou?
+    !!chuu_ren_bou_tou_tally
+  end
+
+  def chuu_ren_bou_tou_tally
+    @chuu_ren_bou_tou_tally ||= begin
+      numbers.clone.tap do |n|
+        # note: cannot use arr1 - arr2 as it deletes all duplicates
+        [1,1,1,2,3,4,5,6,7,8,9,9,9].all? do |i|
+         return false unless matched_index = n.index(i)
+          n.delete_at(matched_index)
+        end
+      end
     end
   end
 
-  def zihai_mentu
-    @zihai_mentu ||= formations.first[:mentu].select { |m| m[:suit] == '字' }
-  end
 
 
-  def get_yaku_hai
-    if zihai_mentu.detect { |m| m[:number] == chanfon }
-      @yaku << "場風　#{ZIHAI[chanfon]}"
-    end
 
-    if zihai_mentu.detect { |m| m[:number] == zifon }
-      @yaku << "自風　#{ZIHAI[zifon]}"
-    end
 
-    zihai_mentu.each do |m|
-      next unless [5, 6, 7].include?(m[:number])
-      @yaku << "役牌　#{ZIHAI[m[:number]]}"
-    end
-  end
 
   def ankou_yaku?(formation)
     case get_ankou_count(formation)
@@ -1049,10 +998,11 @@ end
 # "筒" => %w(① ② ③ ④ ⑤ ⑥ ⑦ ⑧ ⑨),
 # "索" => %w(1 2 3 4 5 6 7 8 9)
 
-y = YakuIdentifier.new(menzen: "東東東南南南西西西北北99", machi:"9", chanfon: 2)
+# y = YakuIdentifier.new(menzen: "東東東南南南西西西北北99", machi:"9", chanfon: 2)
 # y = YakuIdentifier.new(menzen: "白白白發發發中中中北北99", machi:"9", chanfon: 2)
 # y = YakuIdentifier.new(menzen: "2223334446668", machi:"8")
 # y = YakuIdentifier.new(menzen: "1113345678999", machi:"2")
+y = YakuIdentifier.new(menzen: "2333444666888", machi:"2")
 y.run
 
 binding.pry
