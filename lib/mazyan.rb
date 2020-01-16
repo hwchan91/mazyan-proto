@@ -3,13 +3,10 @@ require 'json'
 require 'benchmark'
 
 class Pai
-  # attr_reader :suit, :number, :character
+  # attr_reader :suit, :number, :character    ### currently using a hash to represent the attributes instead of creating a Hai/Pai object
 
   class InvalidCharacterError < StandardError
   end
-
-  # class CannotInitializeError < StandardError
-  # end
 
   TILES = {
     "字" => %w(東 南 西 北 白 發 中),
@@ -48,109 +45,6 @@ class Pai
     end
   end
 end
-
-# class Group
-#   attr_reader :kind, :suit, :number, :is_complete, :is_furou
-
-#   def initialize(params)
-#     @kind          = params[:kind] # 刻順槓嵌
-#     @suit          = params[:suit]
-#     @number        = params[:number]
-#     @is_complete   = params[:is_complete]
-#     @is_furou      = params[:is_furou] || false
-
-#     @is_complete = true if @is_complete.nil?
-#   end
-
-#   def get_machi
-#     return if is_complete
-
-#     case kind
-#     when "刻" then get_kotu_machi
-#     when "順" then get_jun_machi
-#     when "嵌" then get_kanchan_machi
-#     end
-#   end
-
-#   def get_kotu_machi
-#     [Pai.new(suit: suit, number: number)]
-#   end
-
-#   def get_jun_machi
-#     before, after = number - 1, number + 2
-#     machi = []
-#     machi << Pai.new(suit: suit, number: before) if before >= 1
-#     machi << Pai.new(suit: suit, number: after)  if after <= 9
-#     machi
-#   end
-
-#   def get_kanchan_machi
-#     [Pai.new(suit: suit, number: number + 1)]
-#   end
-
-#   class << self
-#     def group_pais(pais: nil, suit: nil, numbers: nil, allow_incomplete: false, allow_kan: false)
-#       unless suit && numbers
-#         suits, numbers = pais.map(&:suit), pais.map(&:number)
-#         return unless all_same?(suits)
-#         suit = suits.first
-#       end
-
-#       num_of_pais = numbers.size
-#       return unless num_of_pais.between?(2, 3) || (num_of_pais == 4 && allow_kan)
-
-#       return group_same(suit, numbers.first, num_of_pais) if all_same?(numbers)
-
-#       return unless suit != '字' && num_of_pais.between?(2, 3)
-#       numbers = numbers.sort
-#       return group_consecutive(suit, numbers.first, num_of_pais) if is_consecutive?(numbers)
-
-#       return unless num_of_pais == 2 && is_kanchan?(numbers)
-#       group_kanchan(suit, numbers.first)
-#     end
-
-#     def all_same?(arr)
-#       arr.uniq.size == 1
-#     end
-
-#     def group_same(suit, number, num_of_pais)
-#       case num_of_pais
-#       when 4
-#         Group.new(kind: "槓", suit: suit, number: number)
-#       when 3
-#         Group.new(kind: "刻", suit: suit, number: number)
-#       when 2
-#         Group.new(kind: "刻", suit: suit, number: number, is_complete: false)
-#       else
-#         nil
-#       end
-#     end
-
-#     def is_consecutive?(numbers)
-#       (0...numbers.size - 1).all? { |i| numbers[i] + 1 == numbers[i + 1] }
-#     end
-
-#     def group_consecutive(suit, number, num_of_pais)
-#       case num_of_pais
-#       when 3
-#         Group.new(kind: "順", suit: suit, number: number)
-#       when 2
-#         Group.new(kind: "順", suit: suit, number: number, is_complete: false)
-#       else
-#         nil
-#       end
-#     end
-
-#     def is_kanchan?(numbers)
-#       a, b = numbers
-#       a + 1 == b - 1
-#     end
-
-#     def group_kanchan(suit, number)
-#       Group.new(kind: "嵌", suit: suit, number: number, is_complete: false)
-#     end
-#   end
-# end
 
 class NumGrouper
   FORMATIONS = [
@@ -796,15 +690,15 @@ class YakuIdentifier
     end
 
     if (shared_yaku & %w(純正国士無双 国士無双 七対子)).any?
-      return shared_yaku
+      yaku_map['_'] = shared_yaku
+    else
+      formations.map do |f|
+        f_identifier = FormationYakuIdentifier.new(formation: f, model: self)
+        yaku_map[f_identifier] = f_identifier.get_yaku
+      end
     end
 
-    formations.map do |f|
-      f_identifier = FormationYakuIdentifier.new(formation: f, model: self)
-      yaku_map[f] = f_identifier.get_yaku
-    end
-
-    yaku_map
+    calculate
   end
 
   def is_menzenchin?
@@ -887,7 +781,67 @@ class YakuIdentifier
   end
 
   def calculate
-    # to be implemented
+    yaku_map.each do |formation, yaku_list|
+      h = {}
+      yaku_list.each do |yaku|
+        h[yaku] = get_han(yaku)
+      end
+    end
+  end
+
+  YAKU_MAN_MULTIPLE = {
+    "純正国士無双": 2,
+    "純正九蓮宝燈": 2,
+    "四暗刻単騎": 2,
+    "大四喜": 2,
+    "国士無双": 1,
+    "四暗刻": 1,
+    "四槓子": 1,
+    "九蓮宝燈": 1,
+    "緑一色": 1,
+    "清老頭": 1,
+    "字一色": 1,
+    "小四喜": 1,
+    "大三元": 1,
+    "天和": 1,
+    "地和": 1
+  }
+
+  YAKU_HAN = {
+    "七対子": [2, 2],
+    "W立直": [2, 0],
+    "立直": [1, 0],
+    "一発": [1, 0],
+    "嶺上開花": [1, 1],
+    "搶槓": [1, 1],
+    "門前清自摸和": [1, 0],
+    "海底摸月": [1, 1],
+    "河底撈魚": [1, 1],
+    "断么九": [1, 1],
+    "混老頭": [3, 2],
+    "清一色": [6, 5],
+    "混一色": [3, 2],
+    "小三元": [2, 2],
+    "役牌 白": [1, 1],
+    "役牌 發": [1, 1],
+    "役牌 中": [1, 1],
+    "場風": [1, 1],
+    "自風": [1, 1],
+    "三暗刻": [2, 2],
+    "対々和": [2, 2],
+    "三槓子": [2, 2],
+    "純全帯么九": [3, 2],
+    "混全帯么九": [2, 1],
+    "二盃口": [3, 0],
+    "一盃口": [1, 0],
+    "平和": [1, 1],
+    "一気通貫": [2, 1],
+    "三色同順": [2, 1],
+    "三色同刻": [2, 1]
+  }
+
+  def get_han(yaku)
+
   end
 end
 
@@ -976,7 +930,9 @@ class FormationYakuIdentifier
     { name: "二盃口", requirements: [:is_menzenchin?, :ryan_pei_kou?] },
     { name: "一盃口", requirements: [:is_menzenchin?, :ii_pei_kou?], mutually_exclusive: ["二盃口"] },
     { name: "平和", requirements: [:is_menzenchin?, :pinfu?] },
-    # rest: ikkituukan sanshokudoujun sanshokudoukou
+    { name: "一気通貫", requirements: [:ik_ki_tuu_kan?] },
+    { name: "三色同順", requirements: [:san_shoku_dou_jun] },
+    { name: "三色同刻", requirements: [:san_shoku_dou_kou] }
   ]
 
   def get_yaku
@@ -1031,7 +987,9 @@ class FormationYakuIdentifier
     (number_mentu + [zyantou]).all? { |group| tai_yao_kyu_group?(group) }
   end
 
+  # consider making group as a Class, and this could be an instance method
   def tai_yao_kyu_group?(group)
+    return false if group[:type] == '字'
     case group[:type]
     when "対", "刻", "暗槓", "加槓", "大明槓"
       [1, 9].include?(group[:number])
@@ -1062,11 +1020,17 @@ class FormationYakuIdentifier
     ryo_men_machi?
   end
 
+  def yaku_hai?(group)
+    return false unless group[:suit] == '字'
+    [5,6,7, chanfon, zifon].include?(group[:number])
+  end
+
   def ryo_men_machi?
     possible_mentu_for_agari.values.include?('両面待ち')
   end
 
-  # to do: possible for refactor
+  # to do: refactor
+  # note: reuse for fu-calculation
   def possible_mentu_for_agari
     @possible_mentu_for_agari ||= begin
       h = {}
@@ -1099,10 +1063,113 @@ class FormationYakuIdentifier
     end
   end
 
+  def ik_ki_tuu_kan?
+    return false unless jun_mentu.size >= 3
+    h = jun_mentu.group_by { |group| group[:suit] }
+    h.values.any? do |arr|
+      arr.size >=3 &&
+        (arr.map { |group| group[:number] } & [1,4,7]).size == 3
+    end
+  end
 
-  def yaku_hai?(group)
-    return false unless group[:suit] == '字'
-    [5,6,7, chanfon, zifon].include?(group[:number])
+  def san_shoku_dou_jun
+    san_shoku?(jun_mentu)
+  end
+
+  def san_shoku_dou_kou
+    san_shoku?(kotu_mentu)
+  end
+
+  def san_shoku?(mentu)
+    return false unless mentu.size >= 3
+    h = mentu.group_by { |group| group[:number] }
+    h.values.any? do |arr|
+      all_three_suits?(arr)
+    end
+  end
+
+  def all_three_suits?(arr)
+    arr.size >= 3 &&
+      (arr.map { |group| group[:suit] } & ["萬", "筒", "索"]).size == 3
+  end
+
+  def fu
+    @fu ||= FuCalculator.new(identifier: self).run
+  end
+end
+
+class FuCalculator
+  extend Forwardable
+
+  attr_reader :identifier, :subtotals
+
+  delegate [:formation, :is_menzenchin?, :tumo, :menzen_kotu, :furou, :zyantou, :chanfon, :zifon, :possible_mentu_for_agari, :yaku_hai?, :tai_yao_kyu_group?] => :identifier
+
+  def initialize(identifier:)
+    @identifier = identifier
+    @subtotals = { "副底" => 20 }
+  end
+
+  def run
+    men_zen_ron_fu
+    tumo_fu
+    mentu_fu
+    zyantou_fu
+    machi_fu
+
+    get_total
+  end
+
+  def men_zen_ron_fu
+    return unless is_menzenchin? && !tumo
+    @subtotals["面前ロン"] = 10
+  end
+
+  def tumo_fu
+    return unless tumo
+    @subtotals["ツモ"] = 2
+  end
+
+  # note: should have some way to separate ankou and meikou
+  def mentu_fu
+    @subtotals["面子"] =
+      menzen_kotu.sum { |kotu| apply_multipliers(kotu, 4) } +
+        (furou - menzen_kotu).sum { |group| apply_multipliers(group, 2) }
+  end
+
+  def apply_multipliers(group, point)
+    point *= 0 if group[:type] == "順"
+    point *= 4 if group[:type][-1] == "槓"
+    point *= 2 if yaku_hai?(group)
+    point *= 2 if tai_yao_kyu_group?(group)
+    point
+  end
+
+  def zyantou_fu
+    @subtotals["アタマ"] = zyantou_fu_point
+  end
+
+  def zyantou_fu_point
+    return 0 unless zyantou[:suit] == '字'
+    point = 0
+    point += 2 if zyantou[:number] == chanfon
+    point += 2 if zyantou[:number] == zifon
+    point
+  end
+
+  def machi_fu
+    @subtotals["待ち"] = if (possible_mentu_for_agari.values & ['辺張待ち', '嵌張待ち', '単騎待ち']).any?
+      2
+    else
+      0
+    end
+  end
+
+  def get_total
+    {
+      subtotals: subtotals,
+      total: (subtotals.values.sum / 10.to_f).ceil * 10
+    }
   end
 end
 
@@ -1118,7 +1185,8 @@ end
 # y = YakuIdentifier.new(menzen: "2233344466688", agari:"8", tumo: true)
 
 # y = YakuIdentifier.new(menzen: "東 南 西 北 白 發 中 一 九 ① ⑨  9 9", agari:"1")
-y = YakuIdentifier.new(menzen: "234 345 56789 ⑨⑨", agari:"7")
+# y = YakuIdentifier.new(menzen: "456 ④ ⑤ ⑥  四 五 六89 ⑨⑨", agari:"7")
+y = YakuIdentifier.new(menzen: "東東 23456", furou: ["8888", "7777*"], agari:"7", zifon: 3, chanfon: 2)
 y.run
 
 binding.pry
