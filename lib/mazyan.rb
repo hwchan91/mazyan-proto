@@ -2,8 +2,8 @@ require 'pry'
 require 'json'
 require 'benchmark'
 
-class Pai
-  # attr_reader :suit, :number, :character    ### currently using a hash to represent the attributes instead of creating a Hai/Pai object
+class Hai
+  # attr_reader :suit, :number, :character    ### currently using a hash to represent the attributes instead of creating a Hai/Hai object
 
   class InvalidCharacterError < StandardError
   end
@@ -15,33 +15,107 @@ class Pai
     "索" => %w(1 2 3 4 5 6 7 8 9)
   }
 
+  GREEN = %w(2 3 4 6 8 發)
+
+  attr_reader :suit, :number, :character
+
+  def initialize(suit:, number:, character:)
+    @suit = suit
+    @number = number
+    @character = character
+  end
+
+  def zi?
+    suit == "字"
+  end
+
+  def number?
+    !zi?
+  end
+
+  def yao_kyuu?
+    number? && [1, 9].include?(number)
+  end
+
+  # not sure if useful
+  def green?
+    GREEN.include?(character)
+  end
+
   class << self
-    def lookup_table
-      @@lookup_table ||= TILES.each_with_object({}) do |(suit, characters), h|
-        characters.each_with_index do |character, i|
-          h[character] = { suit: suit, number: i + 1, character: character }
-        end
-      end
-    end
+    # def lookup_table
+    #   @@lookup_table ||= TILES.each_with_object({}) do |(suit, characters), h|
+    #     characters.each_with_index do |character, i|
+    #       h[character] = { suit: suit, number: i + 1, character: character }
+    #     end
+    #   end
+    # end
 
     def convert_characters(characters)
       characters = characters.scan(/[^\s|,]/)
       characters.map { |c| convert_character(c) }
     end
 
+    # def convert_character(character)
+    #   return character unless character.class == String
+    #   hai = lookup_table[character]
+    #   raise InvalidCharacterError unless hai
+    #   hai
+    # end
+
+    # def to_characters(hais)
+    #   hais.map { |hai| to_character(hai)}
+    # end
+
+    # def to_character(hai)
+    #   TILES[hai[:suit]][hai[:number] - 1]
+    # end
+
     def convert_character(character)
-      return character unless character.class == String
-      pai = lookup_table[character]
-      raise InvalidCharacterError unless pai
-      pai
+      get(character)
     end
 
-    def to_characters(pais)
-      pais.map { |pai| to_character(pai)}
+    def get(*param)
+      lookup[param]
     end
 
-    def to_character(pai)
-      TILES[pai[:suit]][pai[:number] - 1]
+    def all
+      @all ||= lookup.values.uniq
+    end
+
+    def lookup
+      @lockup ||= TILES.each_with_object({}) do |(suit, characters), h|
+        characters.each_with_index do |character, i|
+          hai = Hai.new(suit: suit, number: i + 1, character: character)
+          h[[suit, i + 1]] = h[[i + 1, suit]] = h[[character]] = hai
+        end
+      end
+    end
+  end
+end
+
+class NumGroup
+  attr_reader :number, :type, :complete
+
+  def initialize(number:, type:, complete: false)
+    @number = number # smallest number in the group
+    @type = type
+    @complete = complete # has 3(or more) hai
+  end
+
+  def self.all
+    @all ||=
+      h = {}
+      (1..9).to_a.each do |i|
+        h["刻#{i}"] = new(number: i, type: "刻", complete: true)
+        h["対#{i}"] = new(number: i, type: "対")
+        next if i > 7
+        h["順#{i}"] = new(number: i, type: "順", complete: true)
+        h["嵌#{i}"] = new(number: i, type: "嵌")
+        next if i > 8
+        h["塔#{i}"] = new(number: i, type: "塔")
+      end
+      h
     end
   end
 end
@@ -62,7 +136,14 @@ class NumGrouper
   # end
   CACHE = nil
 
-  class << self
+  attr_reader :all_numbers, :return_one
+
+  def initialize(all_numbers, return_one: false)
+    @all_numbers = all_numbers
+    @return_one = return_one
+  end
+
+  # class << self
     def initialize_tally
       {
         "mentu"    => [],
@@ -72,38 +153,37 @@ class NumGrouper
       }
     end
 
-    def group_from_cache(numbers)
-      group(numbers, return_one: true)
+    def run
+      group(all_numbers, initialize_tally)
     end
 
-    # this whole method should be an instance method, so return_one does not have to be passed in over and over
-    def group(numbers, tally = initialize_tally, return_one: false) # sorted
+    def group(numbers, tally) # sorted
       if return_one && CACHE
         cached_tally = CACHE[numbers.join("")]
         return combine_tallies(cached_tally, tally) if cached_tally
       end
 
       num_of_tiles = numbers.size
-      return wrap(tally, return_one) if num_of_tiles.zero?
+      return wrap(tally) if num_of_tiles.zero?
 
       first = numbers[0]
-      return wrap(tally_isolated(tally, first), return_one) if num_of_tiles == 1
-      return group_without_first(first, numbers, tally, return_one) if first_is_isolated?(first, numbers)
+      return wrap(tally_isolated(tally, first)) if num_of_tiles == 1
+      return group_without_first(first, numbers, tally) if first_is_isolated?(first, numbers)
 
-      tallies = self.const_get("FORMATIONS").each_with_object([]) do |formation, arr|
-        grouped = group_formation(formation, first, numbers, num_of_tiles, tally, return_one)
+      tallies = self.class.const_get("FORMATIONS").each_with_object([]) do |formation, arr|
+        grouped = group_formation(formation, first, numbers, num_of_tiles, tally)
         arr << grouped if grouped
       end
 
-      tallies << group_without_first(first, numbers, tally, return_one)
+      tallies << group_without_first(first, numbers, tally)
 
       tallies.flatten!
       tallies = remove_same(tallies)
 
-      best_tally(tallies, return_one)
+      best_tally(tallies)
     end
 
-    def wrap(tally, return_one)
+    def wrap(tally)
       return tally if return_one
       [tally]
     end
@@ -127,18 +207,18 @@ class NumGrouper
         tally['kouhou'].map{ |h| "#{h[:type]}#{h[:number]}" }.sort.join("")
     end
 
-    def group_without_first(first, numbers, tally, return_one)
-      group(numbers[1..-1], tally_isolated(tally, first), return_one: return_one)
+    def group_without_first(first, numbers, tally)
+      group(numbers[1..-1], tally_isolated(tally, first))
     end
 
-    def group_formation(formation, first, numbers, num_of_tiles, tally, return_one)
+    def group_formation(formation, first, numbers, num_of_tiles, tally)
       symbol       = formation[:symbol]
       category     = formation[:category]
       num_to_group = get_num_to_group(category)
       method       = formation[:method]
 
       grouped, remaining = send("group_#{method}", first, numbers, num_of_tiles, num_to_group)
-      group(remaining, tally_with_category_new(tally, category, symbol, first, symbol == "対"), return_one: return_one) if grouped
+      group(remaining, tally_with_category(tally, category, symbol, first, symbol == "対")) if grouped
     end
 
     def get_num_to_group(category)
@@ -175,7 +255,7 @@ class NumGrouper
       tally
     end
 
-    def tally_with_category_new(tally, category, symbol, number, zyantou = false)
+    def tally_with_category(tally, category, symbol, number, zyantou = false)
       tally = tally_copy(tally)
       tally[category] << { type: symbol, number: number }
       tally["zyantou"] = true if zyantou
@@ -196,7 +276,7 @@ class NumGrouper
       copy
     end
 
-    # if return one foramtion only, then should return ones with the highest mentu count; BUT this is not ideal when wanting return all formations, e.g. [1,1,1,2,3,4,5,6,7,8,9,9,9] should return 9+ formations but this implementation returns only 3
+    # if return one formation only, then should return ones with the highest mentu count; BUT this is not ideal when wanting return all formations, e.g. [1,1,1,2,3,4,5,6,7,8,9,9,9] should return 9+ formations but this implementation returns only 3
     def best_tally_for_one(tallies)
       mentu_count = tallies.map { |t| t['mentu'].count }
       max_mentu = mentu_count.max
@@ -213,7 +293,7 @@ class NumGrouper
       tallies.first
     end
 
-    def best_tally(tallies, return_one)
+    def best_tally(tallies)
       return best_tally_for_one(tallies) if return_one
 
       scores = tallies.map { |t| get_score(t) }
@@ -228,7 +308,7 @@ class NumGrouper
       max_mentu_count = hai_count / 3
       8 - 2 * mentu - [max_mentu_count - mentu, kouhou - zyantou].min - zyantou
     end
-  end
+  # end
 end
 
 class ZihaiGrouper < NumGrouper
@@ -237,6 +317,8 @@ class ZihaiGrouper < NumGrouper
     { symbol: "対", category: "kouhou", method: :same },
   ]
 end
+
+binding.pry
 
 class FurouIdentifier
   class InvalidKanError < StandardError
@@ -266,7 +348,7 @@ class FurouIdentifier
 
   def self.string_into_formation(furou_characters)
     ankan_marker = furou_characters.slice!('*')
-    furou_hais = Pai.convert_characters(furou_characters)
+    furou_hais = Hai.convert_characters(furou_characters)
     FurouIdentifier.identify(furou_hais, ankan: !!ankan_marker)
   end
 end
@@ -274,8 +356,8 @@ end
 class MenzenGrouper
   # should be instance method
   class << self
-    def group(pais, return_one: true)
-      tallies_per_suit = separated_pais(pais).map do |suit, numbers|
+    def group(hais, return_one: true)
+      tallies_per_suit = separated_hais(hais).map do |suit, numbers|
         grouper = suit == "字" ? ZihaiGrouper : NumGrouper
         tallies = grouper.group(numbers, return_one: return_one)
         tallies = [tallies] if return_one # force to array since return_one setting returns a non-array
@@ -285,9 +367,9 @@ class MenzenGrouper
       possibilities.map { |p| combine_suits(p) }
     end
 
-    def separated_pais(pais)
-      hash = pais.inject({}) do |h, pai|
-        suit, number = pai[:suit], pai[:number]
+    def separated_hais(hais)
+      hash = hais.inject({}) do |h, hai|
+        suit, number = hai[:suit], hai[:number]
         h[suit] ||= []
         h[suit] << number
         h
@@ -497,16 +579,16 @@ module RegularizeHelper
 
   def into_number(input)
     return input if input.class == Integer
-    Pai.convert_character(input)[:number]
+    Hai.convert_character(input)[:number]
   end
 
-  def as_pais(menzen)
-    menzen.map { |m| as_pai(m) }
+  def as_hais(menzen)
+    menzen.map { |m| as_hai(m) }
   end
 
-  def as_pai(input)
+  def as_hai(input)
     return input if input.class == Hash
-    Pai.convert_character(input)
+    Hai.convert_character(input)
   end
 end
 
@@ -516,16 +598,16 @@ class ShanteiCalculator
   attr_reader :menzen, :furou, :general_grouper,
     :kokushi_grouper, :chitoitu_grouper, :groupers, :shantei, :quick_find, :shantei
 
-  class WrongNumberOfPaisError < StandardError; end
+  class WrongNumberOfHaisError < StandardError; end
 
   def initialize(menzen:, furou: [], quick_find: true)
-    @menzen = as_pais(as_array(menzen)) # consider only accept hais
+    @menzen = as_hais(as_array(menzen)) # consider only accept hais
     @furou = as_formations(furou)
     @quick_find = quick_find
   end
 
   def run
-    validate_pai_count
+    validate_hai_count
 
     @general_grouper = GeneralGrouper.new(menzen: menzen, furou: furou, return_one: quick_find)
     if furou.empty?
@@ -538,8 +620,8 @@ class ShanteiCalculator
     @shantei = groupers.map{ |g| g.shantei }.min
   end
 
-  def validate_pai_count
-    raise WrongNumberOfPaisError unless menzen.size / 3 + furou.size == 4 && menzen.size % 3 != 0
+  def validate_hai_count
+    raise WrongNumberOfHaisError unless menzen.size / 3 + furou.size == 4 && menzen.size % 3 != 0
   end
 end
 
@@ -569,7 +651,7 @@ class YakuIdentifier
   delegate [:shantei, :general_grouper, :kokushi_grouper, :chitoitu_grouper] => :shantei_calc
   delegate [:formations] => :general_grouper
 
-  class WrongNumberOfPaisError < StandardError; end
+  class WrongNumberOfHaisError < StandardError; end
   class InvalidSituation < StandardError; end
   class NotAgariError < StandardError; end
 
@@ -606,9 +688,9 @@ class YakuIdentifier
     chanfon: 1,
     zifon: 1
     )
-    @menzen         = as_pais(as_array(menzen))
+    @menzen         = as_hais(as_array(menzen))
     @furou          = as_formations(furou)
-    @agari          = as_pai(agari)
+    @agari          = as_hai(agari)
 
     @richi          = double_richi || richi
     @double_richi   = double_richi
