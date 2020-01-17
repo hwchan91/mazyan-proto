@@ -548,10 +548,23 @@ class YakuIdentifier
   extend Forwardable
   include RegularizeHelper
 
+  class KokushiMuSouFormation
+  end
+
+  class ChiToiTuFormation
+    def get_fu
+      {
+        subtotals: { "七対子" => 25 },
+        total: 25
+      }
+    end
+  end
+
   attr_reader :menzen, :furou, :agari, :tumo, :richi, :double_richi, :ipatu,
-    :rinshan, :chankan, :first_jun, :last_hai, :dora_count, :aka_dora_count, :oya, :chanfon, :zifon,
+    :rinshan, :chankan, :haitei, :first_jun, :dora_count, :chanfon, :zifon,
     :shared_yaku, :yaku_map, :formations,
-    :hais, :zi_hais, :number_hais, :numbers, :all_suits
+    :hais, :zi_hais, :number_hais, :numbers, :all_suits,
+    :yakuman_multiple, :han, :fu, :han_details, :fu_details
 
   delegate [:shantei, :general_grouper, :kokushi_grouper, :chitoitu_grouper] => :shantei_calc
   delegate [:formations] => :general_grouper
@@ -586,10 +599,9 @@ class YakuIdentifier
     ipatu: false,
     rinshan: false,
     chankan: false,
-    first_jun: false,
     haitei: false,
+    first_jun: false,
     dora_count: 0,
-    aka_dora_count: 0,
     oya: false,
     chanfon: 1,
     zifon: 1
@@ -607,11 +619,11 @@ class YakuIdentifier
     @rinshan        = rinshan
     @chankan        = chankan
     @haitei         = haitei
+    @first_jun      = first_jun
     @dora_count     = dora_count
 
     @chanfon        = into_number(chanfon)
     @zifon          = into_number(zifon)
-    @oya            = zifon == 1
     @shared_yaku    = [] # yaku that does not depend on formation
     @yaku_map       = {}
   end
@@ -622,6 +634,10 @@ class YakuIdentifier
     validate
 
     get_yaku
+  end
+
+  def oya
+    @oya ||= zifon == 1
   end
 
   def prepare_helpers
@@ -637,6 +653,7 @@ class YakuIdentifier
     raise InvalidSituation if rinshan && !tumo
     raise InvalidSituation if (richi || ipatu) && !is_menzenchin?
     raise InvalidSituation if !richi && ipatu
+    raise InvalidSituation if first_jun && (!tumo || !is_menzenchin?)
 
     shantei_calc.run
     raise NotAgariError unless shantei == -1
@@ -651,6 +668,8 @@ class YakuIdentifier
   end
 
   YAKU_RULES = [
+    { name: "天和", requirements: [:first_jun, :oya] },
+    { name: "地和", requirements: [:first_jun], mutually_exclusive: ["天和"] },
     { name: "純正国士無双", requirements: [:is_menzenchin?, :is_jun_sei_kokushi] },
     { name: "国士無双", requirements: [:is_menzenchin?, :is_kokushi], mutually_exclusive: ["純正国士無双"] },
     { name: "七対子", requirements: [:is_menzenchin?, :is_chitoitu] }, # or exclusive with ryanpeikou
@@ -660,8 +679,8 @@ class YakuIdentifier
     { name: "嶺上開花", requirements: [:rinshan] },
     { name: "搶槓", requirements: [:chankan] },
     { name: "門前清自摸和", requirements: [:is_menzenchin?, :tumo] },
-    { name: "海底摸月", requirements: [:last_hai, :tumo] },
-    { name: "河底撈魚", requirements: [:last_hai], mutually_exclusive: ["海底摸月"] },
+    { name: "海底摸月", requirements: [:haitei, :tumo] },
+    { name: "河底撈魚", requirements: [:haitei], mutually_exclusive: ["海底摸月"] },
     { name: "断么九", requirements: [:no_yaokyu] },
     { name: "清老頭", requirements: [:only_yaokyu, :no_zi_hais] },
     { name: "混老頭", requirements: [:only_yaokyu], mutually_exclusive: ["清老頭"] },
@@ -682,6 +701,57 @@ class YakuIdentifier
     { name: "緑一色", requirements: [:rou_ii_sou?] }
   ]
 
+  YAKU_MAN_MULTIPLE = {
+    "純正国士無双" => 2,
+    "純正九蓮宝燈" => 2,
+    "四暗刻単騎" => 2,
+    "大四喜" => 2,
+    "国士無双" => 1,
+    "四暗刻" => 1,
+    "四槓子" => 1,
+    "九蓮宝燈" => 1,
+    "緑一色" => 1,
+    "清老頭" => 1,
+    "字一色" => 1,
+    "小四喜" => 1,
+    "大三元" => 1,
+    "天和" => 1,
+    "地和" => 1
+  }
+
+  YAKU_HAN = {
+    "七対子" => [2, 2],
+    "W立直" => [2, nil],
+    "立直" => [1, nil],
+    "一発" => [1, nil],
+    "嶺上開花" => [1, 1],
+    "搶槓" => [1, 1],
+    "門前清自摸和" => [1, nil],
+    "海底摸月" => [1, 1],
+    "河底撈魚" => [1, 1],
+    "断么九" => [1, 1],
+    "混老頭" => [2, 2],
+    "清一色" => [6, 5],
+    "混一色" => [3, 2],
+    "小三元" => [2, 2],
+    "役牌 白" => [1, 1],
+    "役牌 發" => [1, 1],
+    "役牌 中" => [1, 1],
+    "場風" => [1, 1],
+    "自風" => [1, 1],
+    "三暗刻" => [2, 2],
+    "対々和" => [2, 2],
+    "三槓子" => [2, 2],
+    "純全帯么九" => [3, 2],
+    "混全帯么九" => [2, 1],
+    "二盃口" => [3, nil],
+    "一盃口" => [1, nil],
+    "平和" => [1, nil],
+    "一気通貫" => [2, 1],
+    "三色同順" => [2, 1],
+    "三色同刻" => [2, 2]
+  }
+
   def get_yaku
     YAKU_RULES.each do |rule|
       next if rule[:mutually_exclusive] && (shared_yaku & rule[:mutually_exclusive]).any?
@@ -689,8 +759,10 @@ class YakuIdentifier
       @shared_yaku << rule[:name]
     end
 
-    if (shared_yaku & %w(純正国士無双 国士無双 七対子)).any?
-      yaku_map['_'] = shared_yaku
+    if (shared_yaku & %w(純正国士無双 国士無双)).any?
+      yaku_map[KokushiMuSouFormation.new] = shared_yaku
+    elsif (shared_yaku & %w(七対子)).any?
+        yaku_map[ChiToiTuFormation.new] = shared_yaku
     else
       formations.map do |f|
         f_identifier = FormationYakuIdentifier.new(formation: f, model: self)
@@ -781,67 +853,34 @@ class YakuIdentifier
   end
 
   def calculate
-    yaku_map.each do |formation, yaku_list|
-      h = {}
-      yaku_list.each do |yaku|
-        h[yaku] = get_han(yaku)
+    totals = yaku_map.map do |formation, yaku_list|
+      h = YAKU_MAN_MULTIPLE.slice(*yaku_list)
+      if h.any?
+        multiple = h.values.sum
+        { yaku_man_multiple: multiple, han: multiple * 13, details: h, formation: formation }
+      else
+        h = YAKU_HAN.slice(*yaku_list)
+        h = h.map { |k, arr| is_menzenchin? ? [k, arr[0]] : [k, arr[1]] }.to_h
+        { han: h.values.sum, details: h, formation: formation }
       end
     end
-  end
 
-  YAKU_MAN_MULTIPLE = {
-    "純正国士無双": 2,
-    "純正九蓮宝燈": 2,
-    "四暗刻単騎": 2,
-    "大四喜": 2,
-    "国士無双": 1,
-    "四暗刻": 1,
-    "四槓子": 1,
-    "九蓮宝燈": 1,
-    "緑一色": 1,
-    "清老頭": 1,
-    "字一色": 1,
-    "小四喜": 1,
-    "大三元": 1,
-    "天和": 1,
-    "地和": 1
-  }
+    best = totals.max_by { |h| h[:han] }
+    @yakuman_multiple = best[:yaku_man_multiple]
+    @han = best[:han]
+    @han_details = best[:details]
 
-  YAKU_HAN = {
-    "七対子": [2, 2],
-    "W立直": [2, 0],
-    "立直": [1, 0],
-    "一発": [1, 0],
-    "嶺上開花": [1, 1],
-    "搶槓": [1, 1],
-    "門前清自摸和": [1, 0],
-    "海底摸月": [1, 1],
-    "河底撈魚": [1, 1],
-    "断么九": [1, 1],
-    "混老頭": [3, 2],
-    "清一色": [6, 5],
-    "混一色": [3, 2],
-    "小三元": [2, 2],
-    "役牌 白": [1, 1],
-    "役牌 發": [1, 1],
-    "役牌 中": [1, 1],
-    "場風": [1, 1],
-    "自風": [1, 1],
-    "三暗刻": [2, 2],
-    "対々和": [2, 2],
-    "三槓子": [2, 2],
-    "純全帯么九": [3, 2],
-    "混全帯么九": [2, 1],
-    "二盃口": [3, 0],
-    "一盃口": [1, 0],
-    "平和": [1, 1],
-    "一気通貫": [2, 1],
-    "三色同順": [2, 1],
-    "三色同刻": [2, 1]
-  }
+    if dora_count > 0
+      @han += dora_count
+      @han_details["ドラ"] = dora_count
+    end
 
-  def get_han(yaku)
+    if @han < 5
+      fu_h = best[:formation].get_fu
+      @fu_details, @fu = fu_h[:subtotals], fu_h[:total]
+    end
 
+    pp yakuman_multiple, han, han_details, fu, fu_details
   end
 end
 
@@ -929,7 +968,7 @@ class FormationYakuIdentifier
     { name: "混全帯么九", requirements: [:tai_yao_kyu?], mutually_exclusive: ["純全帯么九", "清老頭", "混老頭"] },
     { name: "二盃口", requirements: [:is_menzenchin?, :ryan_pei_kou?] },
     { name: "一盃口", requirements: [:is_menzenchin?, :ii_pei_kou?], mutually_exclusive: ["二盃口"] },
-    { name: "平和", requirements: [:is_menzenchin?, :pinfu?] },
+    { name: "平和", requirements: [:pinfu?] },
     { name: "一気通貫", requirements: [:ik_ki_tuu_kan?] },
     { name: "三色同順", requirements: [:san_shoku_dou_jun] },
     { name: "三色同刻", requirements: [:san_shoku_dou_kou] }
@@ -1010,19 +1049,29 @@ class FormationYakuIdentifier
     @pei_kou_count ||= begin
       h = Hash.new(0)
       jun_mentu.each { |group| h[group] += 1 }
-      h.values.count { |v| v > 1 }
+      h.values.map { |v| v / 2 }.sum
     end
   end
 
   def pinfu?
-    return if yaku_hai?(zyantou)
-    return unless jun_mentu.count == 4
-    ryo_men_machi?
+    is_menzenchin? && pinfu_gata?
+  end
+
+  def pinfu_gata?
+    @pinfu_gata ||= begin
+      return if yaku_hai?(zyantou)
+      return unless jun_mentu.count == 4
+      ryo_men_machi?
+    end
   end
 
   def yaku_hai?(group)
-    return false unless group[:suit] == '字'
-    [5,6,7, chanfon, zifon].include?(group[:number])
+    get_yaku_hai(group).any?
+  end
+
+  def get_yaku_hai(group)
+    return [] unless group[:suit] == '字'
+    [5,6,7, chanfon, zifon].select { |i| i == group[:number] }
   end
 
   def ryo_men_machi?
@@ -1093,7 +1142,7 @@ class FormationYakuIdentifier
       (arr.map { |group| group[:suit] } & ["萬", "筒", "索"]).size == 3
   end
 
-  def fu
+  def get_fu
     @fu ||= FuCalculator.new(identifier: self).run
   end
 end
@@ -1103,21 +1152,44 @@ class FuCalculator
 
   attr_reader :identifier, :subtotals
 
-  delegate [:formation, :is_menzenchin?, :tumo, :menzen_kotu, :furou, :zyantou, :chanfon, :zifon, :possible_mentu_for_agari, :yaku_hai?, :tai_yao_kyu_group?] => :identifier
+  delegate [
+    :formation,
+    :is_menzenchin?,
+    :tumo,
+    :menzen_kotu,
+    :furou,
+    :zyantou,
+    :chanfon,
+    :zifon,
+    :possible_mentu_for_agari,
+    :yaku_hai?,
+    :get_yaku_hai,
+    :tai_yao_kyu_group?,
+    :pinfu?
+  ] => :identifier
 
   def initialize(identifier:)
     @identifier = identifier
-    @subtotals = { "副底" => 20 }
+    @subtotals = {}
   end
 
   def run
-    men_zen_ron_fu
-    tumo_fu
-    mentu_fu
-    zyantou_fu
-    machi_fu
+    if pinfu? && tumo
+      pinfu_tumo_fu
+    else
+      men_zen_ron_fu
+      tumo_fu
+      mentu_fu
+      zyantou_fu
+      machi_fu
+      base_fu
+    end
 
     get_total
+  end
+
+  def pinfu_tumo_fu
+    @subtotals["平和ツモ"] = 20
   end
 
   def men_zen_ron_fu
@@ -1132,9 +1204,10 @@ class FuCalculator
 
   # note: should have some way to separate ankou and meikou
   def mentu_fu
-    @subtotals["面子"] =
-      menzen_kotu.sum { |kotu| apply_multipliers(kotu, 4) } +
-        (furou - menzen_kotu).sum { |group| apply_multipliers(group, 2) }
+    point = menzen_kotu.sum { |kotu| apply_multipliers(kotu, 4) } +
+      (furou - menzen_kotu).sum { |group| apply_multipliers(group, 2) }
+    return unless point > 0
+    @subtotals["面子"] = point
   end
 
   def apply_multipliers(group, point)
@@ -1146,22 +1219,22 @@ class FuCalculator
   end
 
   def zyantou_fu
-    @subtotals["アタマ"] = zyantou_fu_point
-  end
-
-  def zyantou_fu_point
-    return 0 unless zyantou[:suit] == '字'
-    point = 0
-    point += 2 if zyantou[:number] == chanfon
-    point += 2 if zyantou[:number] == zifon
-    point
+    point = get_yaku_hai(zyantou).count
+    return unless point > 0
+    @subtotals["アタマ"] = point * 2
   end
 
   def machi_fu
-    @subtotals["待ち"] = if (possible_mentu_for_agari.values & ['辺張待ち', '嵌張待ち', '単騎待ち']).any?
-      2
+    single_machi = (possible_mentu_for_agari.values & ['辺張待ち', '嵌張待ち', '単騎待ち']).first
+    return unless single_machi
+    @subtotals[single_machi] = 2
+  end
+
+  def base_fu
+    if @subtotals.any?
+      @subtotals["副底"] = 20
     else
-      0
+      @subtotals["喰い平和型"] = 30
     end
   end
 
@@ -1178,15 +1251,18 @@ end
 # "筒" => %w(① ② ③ ④ ⑤ ⑥ ⑦ ⑧ ⑨),
 # "索" => %w(1 2 3 4 5 6 7 8 9)
 
-# y = YakuIdentifier.new(menzen: "東東東南南南西西西北北99", agari:"9", chanfon: 2)
+# y = YakuIdentifier.new(menzen: "東東東南南南西西西北北北中", agari:"中", chanfon: 2)
 # y = YakuIdentifier.new(menzen: "白白白發發發中中中北北99", agari:"9", chanfon: 2)
 # y = YakuIdentifier.new(menzen: "2223334446668", agari:"8")
 # y = YakuIdentifier.new(menzen: "1113345678999", agari:"2")
 # y = YakuIdentifier.new(menzen: "2233344466688", agari:"8", tumo: true)
 
 # y = YakuIdentifier.new(menzen: "東 南 西 北 白 發 中 一 九 ① ⑨  9 9", agari:"1")
-# y = YakuIdentifier.new(menzen: "456 ④ ⑤ ⑥  四 五 六89 ⑨⑨", agari:"7")
-y = YakuIdentifier.new(menzen: "東東 23456", furou: ["8888", "7777*"], agari:"7", zifon: 3, chanfon: 2)
+# y = YakuIdentifier.new(menzen: "456 ④ ⑤ ⑥  四 五 六78 ⑨⑨", agari:"9", furou: [], tumo: true)
+# y = YakuIdentifier.new(menzen: "東東 23456", furou: ["8888", "7777*"], agari:"7", zifon: 3, chanfon: 1)
+# y = YakuIdentifier.new(menzen: "11223344一 二 三① ② ", agari:"③", zifon: 3, chanfon: 1, dora_count: 5)
+# y = YakuIdentifier.new(menzen: "11223344一 二 三① ② ", agari:"③", zifon: 3, chanfon: 1, dora_count: 5)
+y = YakuIdentifier.new(menzen: "112233445577③ ", agari:"③", zifon: 3, chanfon: 1)
 y.run
 
 binding.pry
