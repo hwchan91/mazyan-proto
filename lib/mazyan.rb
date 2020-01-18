@@ -42,6 +42,10 @@ class Hai
     GREEN.include?(character)
   end
 
+  def characters
+    character
+  end
+
   class << self
     # def lookup_table
     #   @@lookup_table ||= TILES.each_with_object({}) do |(suit, characters), h|
@@ -79,44 +83,148 @@ class Hai
       lookup[param]
     end
 
-    def all
-      @all ||= lookup.values.uniq
+    def lookup
+      @lookup ||= generate_all[0]
     end
 
-    def lookup
-      @lockup ||= TILES.each_with_object({}) do |(suit, characters), h|
+    def all
+      @all ||= generate_all[1]
+    end
+
+    def generate_all
+      @lookup = {}
+      @all = {}
+
+      TILES.each do |suit, characters|
         characters.each_with_index do |character, i|
           hai = Hai.new(suit: suit, number: i + 1, character: character)
-          h[[suit, i + 1]] = h[[i + 1, suit]] = h[[character]] = hai
+          @lookup[[character]] = hai
+          @all[suit] ||= []
+          @all[suit] << hai
         end
       end
+
+      [@lookup, @all]
     end
   end
 end
 
-class NumGroup
-  attr_reader :number, :type, :complete
+class MentuBase
+  attr_reader :suit, :number, :type, :characters, :complete
 
-  def initialize(number:, type:, complete: false)
+  def initialize(suit:, number:, type:, characters:, complete: true)
+    @suit = suit
     @number = number # smallest number in the group
     @type = type
-    @complete = complete # has 3(or more) hai
+    @characters = characters
+    @complete = complete
   end
 
-  def self.all
-    @all ||=
+  def kotu?
+    "刻" == type
+  end
+
+  def kan?
+    "槓" == type
+  end
+
+  def jun?
+    "順" == type
+  end
+
+  def tai_yao_kyuu?
+    if jun?
+      number == 1 || number == 7
+    else
+      yao_kyuu?
+    end
+  end
+
+  def yao_kyuu?
+    !jun? &&
+      number == 1 || number == 9
+  end
+
+  # might be better to save as instance variable
+  def hais
+    @hais ||= characters.map { Hai.get(character) }
+  end
+
+  def self.from_characters(characters)
+    character_lookup[characters]
+  end
+
+  def self.character_lookup
+    @lookup ||= begin
       h = {}
-      (1..9).to_a.each do |i|
-        h["刻#{i}"] = new(number: i, type: "刻", complete: true)
-        h["対#{i}"] = new(number: i, type: "対")
-        next if i > 7
-        h["順#{i}"] = new(number: i, type: "順", complete: true)
-        h["嵌#{i}"] = new(number: i, type: "嵌")
-        next if i > 8
-        h["塔#{i}"] = new(number: i, type: "塔")
+      all.values.each do |mentu|
+        if mentu.jun?
+          mentu.characters.split("").permutation.each do |permu|
+            h[permu.join] = mentu
+          end
+        else
+          h[mentu.characters] = mentu
+        end
       end
       h
     end
+  end
+
+  def self.get(suit, type, number)
+    all["#{suit}#{type}#{number}"]
+  end
+
+  def self.all
+    @all ||= begin
+      h = {}
+      Hai::TILES.each do |suit, characters|
+        characters.each_with_index do |character, i|
+          number = i + 1
+          h["#{suit}槓#{number}"] = MentuBase.new(suit: suit, number: number, type: "槓", characters: character * 4)
+          h["#{suit}刻#{number}"] = MentuBase.new(suit: suit, number: number, type: "刻", characters: character * 3)
+          h["#{suit}対#{number}"] = MentuBase.new(suit: suit, number: number, type: "対", characters: character * 2, complete: false)
+          next if suit == '字'
+          next if i > 7
+          h["#{suit}順#{number}"] = MentuBase.new(suit: suit, number: number, type: "順", characters: characters[i..i+2].join)
+        end
+      end
+      h
+    end
+  end
+
+  def self.get(suit, symbol, number)
+    all["#{suit}#{symbol}#{number}"]
+  end
+end
+
+class Mentu
+  extend Forwardable
+
+  delegate [
+    :suit, :type, :number, :kotu?, :kan?, :jun?, :yao_kyuu?, :tai_yao_kyuu?
+  ] => :"@base"
+
+
+  def initialize(menzen: true, base: nil, suit: nil, type: nil, number: nil)
+    @base = base
+    @base ||= MentuBase.get(suit, type, number)
+    @menzen = menzen
+  end
+
+  def an_kou?
+    (kotu? || kan?) && menzen?
+  end
+
+  def an_kan?
+    kan? && menzen?
+  end
+
+  def mei_kan?
+    kan? && !menzen?
+  end
+
+  def menzen?
+    @menzen
   end
 end
 
@@ -129,186 +237,169 @@ class NumGrouper
     { symbol: "嵌", category: "kouhou", method: :kanchan },
   ]
 
-  # if File.exist?("cache.json")
-  #   CACHE = JSON.parse(File.read("cache.json"))
-  # else
-  #   CACHE = nil
-  # end
-  CACHE = nil
+  if File.exist?("all_cache.json")
+    c = JSON.parse(File.read("all_cache.json"))
+    CACHE = c.map { |k, arr|
+      sym_arr = arr.map { |tally|
+        tally.map { |elem| elem.class == Array ? [ elem[0].to_sym, elem[1]] : elem }
+      }
+      [k, sym_arr]
+    }.to_h
+  else
+    CACHE = nil
+  end
 
-  attr_reader :all_numbers, :return_one
+  attr_reader :suit, :return_one
 
   def initialize(all_numbers, return_one: false)
     @all_numbers = all_numbers
     @return_one = return_one
   end
 
-  # class << self
-    def initialize_tally
-      {
-        "mentu"    => [],
-        "kouhou"   => [],
-        "isolated" =>  [],
-        "zyantou"  => false
-      }
+  def run
+    results = group(@all_numbers, [])
+    remove_same(results)
+  end
+
+  def group(numbers, tally) # sorted
+    if CACHE
+      cached_tally = CACHE[numbers.join("")]
+      return combine_tallies(cached_tally, tally) if cached_tally
     end
 
-    def run
-      group(all_numbers, initialize_tally)
+    num_of_tiles = numbers.size
+    return wrap(tally) if num_of_tiles.zero?
+
+    first = numbers[0]
+    return wrap(tally_isolated(tally, first)) if num_of_tiles == 1
+    return group_without_first(first, numbers, tally) if first_is_isolated?(first, numbers)
+
+    tallies = self.class.const_get("FORMATIONS").each_with_object([]) do |formation, arr|
+      grouped = group_formation(formation, first, numbers, num_of_tiles, tally)
+      arr << grouped if grouped
     end
+    tallies << group_without_first(first, numbers, tally)
+    tallies = tallies.flatten(1)
+    tallies, _ = best_tally(tallies)
+    tallies
+  end
 
-    def group(numbers, tally) # sorted
-      if return_one && CACHE
-        cached_tally = CACHE[numbers.join("")]
-        return combine_tallies(cached_tally, tally) if cached_tally
-      end
+  def wrap(tally)
+    [tally]
+  end
 
-      num_of_tiles = numbers.size
-      return wrap(tally) if num_of_tiles.zero?
-
-      first = numbers[0]
-      return wrap(tally_isolated(tally, first)) if num_of_tiles == 1
-      return group_without_first(first, numbers, tally) if first_is_isolated?(first, numbers)
-
-      tallies = self.class.const_get("FORMATIONS").each_with_object([]) do |formation, arr|
-        grouped = group_formation(formation, first, numbers, num_of_tiles, tally)
-        arr << grouped if grouped
-      end
-
-      tallies << group_without_first(first, numbers, tally)
-
-      tallies.flatten!
-      tallies = remove_same(tallies)
-
-      best_tally(tallies)
+  def combine_tallies(tally1, tally2)
+    arr = []
+    tally1.each do |t1|
+      arr << t1.clone + tally2
     end
+    arr
+  end
 
-    def wrap(tally)
-      return tally if return_one
-      [tally]
-    end
-
-    def combine_tallies(tally1, tally2)
-      h = %w(mentu kouhou isolated).each_with_object({}) { |category, h| h[category] = tally1[category] + tally2[category] }
-      h["zyantou"] = tally1["zyantou"] || tally2["zyantou"]
+  def remove_same(tallies)
+    return tallies if tallies.count == 1
+    set = tallies.inject({}) do |h, tally|
+      h[tally.map(&:to_s).sort.join] = tally
       h
     end
+    set.values
+  end
 
-    def remove_same(tallies)
-      set = tallies.inject({}) do |h, tally|
-        h[get_key(tally)] = tally
-        h
+  def group_without_first(first, numbers, tally)
+    group(numbers[1..-1], tally_isolated(tally, first))
+  end
+
+  def group_formation(formation, first, numbers, num_of_tiles, tally)
+    symbol       = formation[:symbol]
+    category     = formation[:category]
+    num_to_group = get_num_to_group(category)
+    method       = formation[:method]
+
+    grouped, remaining = send("group_#{method}", first, numbers, num_of_tiles, num_to_group)
+    group(remaining, tally_with_category(tally, symbol, first)) if grouped
+  end
+
+  def get_num_to_group(category)
+    category == "mentu" ? 3 : 2
+  end
+
+  def first_is_isolated?(first, numbers)
+    numbers[1] - first > 2
+  end
+
+  def group_same(first, numbers, num_of_tiles, num_of_same_tiles)
+    return if num_of_tiles < num_of_same_tiles
+    return unless (1...num_of_same_tiles).all? { |i| first == numbers[i] }
+    [numbers[0...num_of_same_tiles], numbers[num_of_same_tiles..-1]]
+  end
+
+  def group_sequence(first, numbers, num_of_tiles, length_of_sequence)
+    return if num_of_tiles < length_of_sequence || first >=  11 - length_of_sequence
+    return unless (1...length_of_sequence).all? { |i| numbers.include?(first + i) }
+    sequence = (first...first + length_of_sequence).to_a
+    [sequence, get_remaining(numbers, sequence)]
+  end
+
+  def group_kanchan(first, numbers, num_of_tiles, _)
+    return if first >= 8
+    return unless numbers.include?(first + 2)
+    kanchan = [first, first + 2]
+    [kanchan, get_remaining(numbers, kanchan)]
+  end
+
+  def tally_isolated(tally, number)
+    _tally = tally.clone
+    _tally += [number]
+  end
+
+  def tally_with_category(tally, symbol, number)
+    _tally = tally.clone
+    _tally += [[:"#{symbol}", number]]
+  end
+
+  def get_remaining(numbers, to_remove)
+    numbers = numbers.clone
+    to_remove.each { |i| numbers.delete_at(numbers.index(i)) }
+    numbers
+  end
+
+  def best_tally(tallies)
+    scores = tallies.map { |t| get_score(t) }
+
+    best_score = scores.min
+    indices_with_best_score = (0...scores.size).select { |i| scores[i] == best_score }
+    tallies = indices_with_best_score.map{ |i| tallies[i] }
+
+    return [tallies.first], best_score if return_one
+    [tallies, best_score]
+  end
+
+  # benchmarking shows this is hte most intensive operation, instead of number splitting
+  # i.e. calling more of this method would slow down performance
+  # using symbols improve the perf. by 33%
+  # althogh none of this matters if the result is cached
+  def get_score(tally)
+    mentu, kouhou, isolated, zyantou = [], [], [], 0
+    tally.each do |elem|
+      case type = elem[0]
+      when :"刻", :"順"
+        mentu << elem
+      when :"対", :"塔", :"嵌"
+        kouhou << elem
+        zyantou = 1 if type == :"対"
+      else
+        isolated << elem
       end
-      set.values
     end
+    mentu_count, kouhou_count, isolated_count = mentu.count, kouhou.count, isolated.count
 
-    def get_key(tally)
-      tally['mentu'].map{ |h| "#{h[:type]}#{h[:number]}" }.sort.join("") +
-        tally['kouhou'].map{ |h| "#{h[:type]}#{h[:number]}" }.sort.join("")
-    end
-
-    def group_without_first(first, numbers, tally)
-      group(numbers[1..-1], tally_isolated(tally, first))
-    end
-
-    def group_formation(formation, first, numbers, num_of_tiles, tally)
-      symbol       = formation[:symbol]
-      category     = formation[:category]
-      num_to_group = get_num_to_group(category)
-      method       = formation[:method]
-
-      grouped, remaining = send("group_#{method}", first, numbers, num_of_tiles, num_to_group)
-      group(remaining, tally_with_category(tally, category, symbol, first, symbol == "対")) if grouped
-    end
-
-    def get_num_to_group(category)
-      category == "mentu" ? 3 : 2
-    end
-
-    def first_is_isolated?(first, numbers)
-      numbers[1] - first > 2
-    end
-
-    def group_same(first, numbers, num_of_tiles, num_of_same_tiles)
-      return if num_of_tiles < num_of_same_tiles
-      return unless (1...num_of_same_tiles).all? { |i| first == numbers[i] }
-      [numbers[0...num_of_same_tiles], numbers[num_of_same_tiles..-1]]
-    end
-
-    def group_sequence(first, numbers, num_of_tiles, length_of_sequence)
-      return if num_of_tiles < length_of_sequence || first >=  11 - length_of_sequence
-      return unless (1...length_of_sequence).all? { |i| numbers.include?(first + i) }
-      sequence = (first...first + length_of_sequence).to_a
-      [sequence, get_remaining(numbers, sequence)]
-    end
-
-    def group_kanchan(first, numbers, num_of_tiles, _)
-      return if first >= 8
-      return unless numbers.include?(first + 2)
-      kanchan = [first, first + 2]
-      [kanchan, get_remaining(numbers, kanchan)]
-    end
-
-    def tally_isolated(tally, number)
-      tally = tally_copy(tally)
-      tally["isolated"] << number
-      tally
-    end
-
-    def tally_with_category(tally, category, symbol, number, zyantou = false)
-      tally = tally_copy(tally)
-      tally[category] << { type: symbol, number: number }
-      tally["zyantou"] = true if zyantou
-      tally
-    end
-
-    def get_remaining(numbers, to_remove)
-      numbers = numbers.clone
-      to_remove.each { |i| numbers.delete_at(numbers.index(i)) }
-      numbers
-    end
-
-    def tally_copy(tally)
-      copy = {}
-      tally.each do |k ,v|
-        copy[k] = v.clone
-      end
-      copy
-    end
-
-    # if return one formation only, then should return ones with the highest mentu count; BUT this is not ideal when wanting return all formations, e.g. [1,1,1,2,3,4,5,6,7,8,9,9,9] should return 9+ formations but this implementation returns only 3
-    def best_tally_for_one(tallies)
-      mentu_count = tallies.map { |t| t['mentu'].count }
-      max_mentu = mentu_count.max
-      indices_with_max_mentu = (0...mentu_count.size).select { |i| mentu_count[i] == max_mentu }
-      tallies = indices_with_max_mentu.map{ |i| tallies[i] }
-
-      if tallies.count > 1
-        isolated_count = tallies.map { |t| t['isolated'].count }
-        min_isolated = isolated_count.min
-        indices_with_min_isolated = (0...isolated_count.size).select { |i| isolated_count[i] == min_isolated }
-        tallies = indices_with_min_isolated.map{ |i| tallies[i] }
-      end
-
-      tallies.first
-    end
-
-    def best_tally(tallies)
-      return best_tally_for_one(tallies) if return_one
-
-      scores = tallies.map { |t| get_score(t) }
-      best_score = scores.min
-      indices_with_best_score = (0...scores.size).select { |i| scores[i] == best_score }
-      tallies = indices_with_best_score.map{ |i| tallies[i] }
-    end
-
-    def get_score(tally)
-      mentu, kouhou, zyantou = tally["mentu"].size, tally["kouhou"].size, tally["zyantou"] ? 1 : 0
-      hai_count = 3 * mentu + 2 * kouhou + tally['isolated'].size
-      max_mentu_count = hai_count / 3
-      8 - 2 * mentu - [max_mentu_count - mentu, kouhou - zyantou].min - zyantou
-    end
-  # end
+    hai_count = 3 * mentu_count + 2 * kouhou_count + isolated_count
+    max_mentu_count = hai_count / 3
+    shantei = (max_mentu_count - mentu_count) * 2 - [max_mentu_count - mentu_count, kouhou_count - zyantou].min - zyantou
+    return shantei if hai_count == 14
+    return 0 if shantei <= 0 && isolated_count == 0 # no need to differentiate 0/-1 as combining with other suits might lead the same shantei
+    shantei - mentu_count * 0.01 + isolated_count * 0.1 # adjust for max mentu and least isolated
+  end
 end
 
 class ZihaiGrouper < NumGrouper
@@ -317,8 +408,6 @@ class ZihaiGrouper < NumGrouper
     { symbol: "対", category: "kouhou", method: :same },
   ]
 end
-
-binding.pry
 
 class FurouIdentifier
   class InvalidKanError < StandardError
@@ -355,62 +444,62 @@ end
 
 class MenzenGrouper
   # should be instance method
-  class << self
-    def group(hais, return_one: true)
-      tallies_per_suit = separated_hais(hais).map do |suit, numbers|
-        grouper = suit == "字" ? ZihaiGrouper : NumGrouper
-        tallies = grouper.group(numbers, return_one: return_one)
-        tallies = [tallies] if return_one # force to array since return_one setting returns a non-array
-        tallies.map { |tally| add_suit_to_tally(suit, tally) }
-      end
-      possibilities = get_permutations(tallies_per_suit)
-      possibilities.map { |p| combine_suits(p) }
-    end
+  attr_reader :hais, :return_one
 
-    def separated_hais(hais)
-      hash = hais.inject({}) do |h, hai|
-        suit, number = hai[:suit], hai[:number]
-        h[suit] ||= []
-        h[suit] << number
-        h
-      end
-      hash.each { |k,v| v.sort! }
-      hash
-    end
+  def initialize(hais:, return_one: true)
+    @hais = hais
+    @return_one = return_one
+  end
 
-    def add_suit_to_tally(suit, tally)
-      new_tally = {}
-      new_tally['mentu']    = tally['mentu'].map { |mentu| mentu.merge(suit: suit) }
-      new_tally['kouhou']   = tally['kouhou'].map { |kouhou| kouhou.merge(suit: suit) }
-      new_tally['isolated'] = tally['isolated'].map { |number| { suit: suit, number: number } }
-      new_tally['zyantou']  = tally['zyantou']
-      new_tally
+  def run
+    tallies_per_suit = separated_hais.map do |suit, numbers|
+      grouper = suit == "字" ? ZihaiGrouper : NumGrouper
+      tallies = grouper.new(numbers, return_one: return_one).run
+      tallies.map { |tally| tally.map{ |symbol| into_mentu(suit, symbol) } }
     end
+    possibilities = get_permutations(tallies_per_suit)
+    possibilities.map { |p| p.flatten }
+  end
 
-    def get_permutations(tallies)
-      permutations(tallies).flatten(tallies.size - 1)
-    end
-
-    def permutations(tallies, stored = [])
-      return stored if tallies.empty?
-      first_suit, rest = tallies[0], tallies[1..-1]
-      all = first_suit.map do |tally|
-        new_record = stored.dup
-        new_record << tally
-        permutations(rest, new_record)
-      end
-    end
-
-    def combine_suits(tallies)
-      combined_tally = {}
-      %w(mentu kouhou isolated).each do |type|
-        combined_tally[type] = tallies.inject([]) { |arr, t| arr += t[type] }
-      end
-      combined_tally['zyantou'] = tallies.inject(false) { |bool, t| bool || t['zyantou'] }
-      combined_tally
+  def separated_hais
+    @separated_hais ||= begin
+      hash = hais.group_by(&:suit)
+      hash.map { |suit, hais| [suit, hais.map(&:number).sort] }.to_h
     end
   end
+
+  # this doesn't work for isolated hais!
+  def into_mentu(suit, symbol)
+    Mentu.new(menzen: true, base: MentuBase.get(suit, symbol[0], symbol[1]))
+  end
+
+  def get_permutations(tallies)
+    permutations(tallies).flatten(tallies.size - 1)
+  end
+
+  def permutations(tallies, stored = [])
+    return stored if tallies.empty?
+    first_suit, rest = tallies[0], tallies[1..-1]
+    all = first_suit.map do |tally|
+      new_record = stored.dup
+      new_record << tally
+      permutations(rest, new_record)
+    end
+  end
+
+    # def combine_suits(tallies)
+    #   combined_tally = {}
+    #   %w(mentu kouhou isolated).each do |type|
+    #     combined_tally[type] = tallies.inject([]) { |arr, t| arr += t[type] }
+    #   end
+    #   combined_tally['zyantou'] = tallies.inject(false) { |bool, t| bool || t['zyantou'] }
+    #   combined_tally
+    # end
 end
+
+
+# hais = "456 45677  四 五 六78 9".scan(/[^\s|,]/).map{|c| Hai.get(c)}
+# MenzenGrouper.new(hais: hais, return_one: false).run
 
 class CacheGenerator
   class << self
@@ -438,22 +527,32 @@ class CacheGenerator
       ).flatten(max_tiles - 1)
     end
 
-    def get_all_combinations(max_repeat: 4, min_tiles: 1, max_tiles: 9, start_from: 1, up_to: 9)
+    def get_all_combinations(max_repeat: 4, min_tiles: 1, max_tiles: 14, start_from: 1, up_to: 9)
       (min_tiles..max_tiles).each_with_object([]) do |i, arr|
         arr << get_combinations(max_repeat: max_repeat, max_tiles: i, start_from: start_from, up_to: up_to)
       end.flatten(1)
     end
 
-    def generate_cache(combinations = get_all_combinations, file = "cache.json")
+    def generate_cache(combinations = get_all_combinations, file = "cache4.json")
       hash = {}
       combinations.each do |numbers|
-        value = NumGrouper.group(numbers, return_one: true)
+        value = NumGrouper.new(numbers).run
         key = numbers.join("")
         hash[key] = value
       end
       File.open(file, 'a+') { |f| f.write(hash.to_json) }
     end
   end
+end
+
+require 'benchmark'
+tests= CacheGenerator.get_all_combinations(min_tiles: 10).sample(100)
+Benchmark.bm do |x|
+  x.report { 
+    tests.each do |t|
+      NumGrouper.new(t).run
+    end
+  }
 end
 
 class GeneralGrouper
@@ -1344,10 +1443,10 @@ end
 # y = YakuIdentifier.new(menzen: "東東 23456", furou: ["8888", "7777*"], agari:"7", zifon: 3, chanfon: 1)
 # y = YakuIdentifier.new(menzen: "11223344一 二 三① ② ", agari:"③", zifon: 3, chanfon: 1, dora_count: 5)
 # y = YakuIdentifier.new(menzen: "11223344一 二 三① ② ", agari:"③", zifon: 3, chanfon: 1, dora_count: 5)
-y = YakuIdentifier.new(menzen: "112233445577③ ", agari:"③", zifon: 3, chanfon: 1)
-y.run
+# y = YakuIdentifier.new(menzen: "112233445577③ ", agari:"③", zifon: 3, chanfon: 1)
+# y.run
 
-binding.pry
+# binding.pry
 
 # samples = CacheGenerator.get_combinations(max_tiles: 14).sample(10)
 # samples.each {|s| p s; puts "\n"; pp GeneralGrouper.group(menzen: s.join(""), furou: [], return_one: false); puts "\n\n\n" }
