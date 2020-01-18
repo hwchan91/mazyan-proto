@@ -109,125 +109,6 @@ class Hai
   end
 end
 
-class MentuBase
-  attr_reader :suit, :number, :type, :characters, :complete
-
-  def initialize(suit:, number:, type:, characters:, complete: true)
-    @suit = suit
-    @number = number # smallest number in the group
-    @type = type
-    @characters = characters
-    @complete = complete
-  end
-
-  def kotu?
-    "刻" == type
-  end
-
-  def kan?
-    "槓" == type
-  end
-
-  def jun?
-    "順" == type
-  end
-
-  def tai_yao_kyuu?
-    if jun?
-      number == 1 || number == 7
-    else
-      yao_kyuu?
-    end
-  end
-
-  def yao_kyuu?
-    !jun? &&
-      number == 1 || number == 9
-  end
-
-  # might be better to save as instance variable
-  def hais
-    @hais ||= characters.map { Hai.get(character) }
-  end
-
-  def self.from_characters(characters)
-    character_lookup[characters]
-  end
-
-  def self.character_lookup
-    @lookup ||= begin
-      h = {}
-      all.values.each do |mentu|
-        if mentu.jun?
-          mentu.characters.split("").permutation.each do |permu|
-            h[permu.join] = mentu
-          end
-        else
-          h[mentu.characters] = mentu
-        end
-      end
-      h
-    end
-  end
-
-  def self.get(suit, type, number)
-    all["#{suit}#{type}#{number}"]
-  end
-
-  def self.all
-    @all ||= begin
-      h = {}
-      Hai::TILES.each do |suit, characters|
-        characters.each_with_index do |character, i|
-          number = i + 1
-          h["#{suit}槓#{number}"] = MentuBase.new(suit: suit, number: number, type: "槓", characters: character * 4)
-          h["#{suit}刻#{number}"] = MentuBase.new(suit: suit, number: number, type: "刻", characters: character * 3)
-          h["#{suit}対#{number}"] = MentuBase.new(suit: suit, number: number, type: "対", characters: character * 2, complete: false)
-          next if suit == '字'
-          next if i > 7
-          h["#{suit}順#{number}"] = MentuBase.new(suit: suit, number: number, type: "順", characters: characters[i..i+2].join)
-        end
-      end
-      h
-    end
-  end
-
-  def self.get(suit, symbol, number)
-    all["#{suit}#{symbol}#{number}"]
-  end
-end
-
-class Mentu
-  extend Forwardable
-
-  delegate [
-    :suit, :type, :number, :kotu?, :kan?, :jun?, :yao_kyuu?, :tai_yao_kyuu?
-  ] => :"@base"
-
-
-  def initialize(menzen: true, base: nil, suit: nil, type: nil, number: nil)
-    @base = base
-    @base ||= MentuBase.get(suit, type, number)
-    @menzen = menzen
-  end
-
-  def an_kou?
-    (kotu? || kan?) && menzen?
-  end
-
-  def an_kan?
-    kan? && menzen?
-  end
-
-  def mei_kan?
-    kan? && !menzen?
-  end
-
-  def menzen?
-    @menzen
-  end
-end
-
 class NumGrouper
   FORMATIONS = [
     { symbol: "刻", category: "mentu",  method: :same },
@@ -236,18 +117,26 @@ class NumGrouper
     { symbol: "塔", category: "kouhou", method: :sequence },
     { symbol: "嵌", category: "kouhou", method: :kanchan },
   ]
+  CACHE_FILE_PATH = 'test2.json'# 'test.json'
 
-  if File.exist?("all_cache.json")
-    c = JSON.parse(File.read("all_cache.json"))
-    CACHE = c.map { |k, arr|
-      sym_arr = arr.map { |tally|
-        tally.map { |elem| elem.class == Array ? [ elem[0].to_sym, elem[1]] : elem }
-      }
-      [k, sym_arr]
-    }.to_h
-  else
-    CACHE = nil
+  def self.load_cache
+    if File.exist?(CACHE_FILE_PATH)
+      c = JSON.parse(File.read(CACHE_FILE_PATH))
+      @cache = c.map { |key, tallies|
+        symbolized_tallies = tallies.map { |tally|
+          tally.map { |group| group.class == Array ? [ group[0].to_sym, group[1]] : group }
+        }
+        [key, symbolized_tallies]
+      }.to_h
+    else
+      @cache = nil
+    end
   end
+
+  def self.cache
+    @cache
+  end
+  # NumGrouper.load_cache
 
   attr_reader :suit, :return_one
 
@@ -262,9 +151,13 @@ class NumGrouper
   end
 
   def group(numbers, tally) # sorted
-    if CACHE
-      cached_tally = CACHE[numbers.join("")]
-      return combine_tallies(cached_tally, tally) if cached_tally
+    if NumGrouper.cache
+      cached_tally =  NumGrouper.cache[numbers.join("")]
+      if cached_tally
+        combined_tallies = combine_tallies(cached_tally, tally)
+        return [combined_tallies.first] if return_one
+        return combined_tallies
+      end
     end
 
     num_of_tiles = numbers.size
@@ -278,7 +171,9 @@ class NumGrouper
       grouped = group_formation(formation, first, numbers, num_of_tiles, tally)
       arr << grouped if grouped
     end
+
     tallies << group_without_first(first, numbers, tally)
+
     tallies = tallies.flatten(1)
     tallies, _ = best_tally(tallies)
     tallies
@@ -364,41 +259,74 @@ class NumGrouper
   end
 
   def best_tally(tallies)
-    scores = tallies.map { |t| get_score(t) }
-
+    hai_count = get_hai_count(tallies.first)
+    max_mentu = hai_count / 3
+    scores_with_mentu = tallies.map { |t| get_score(t, hai_count, max_mentu) }
+    scores, mentu = scores_with_mentu.map(&:first), scores_with_mentu.map(&:last)
     best_score = scores.min
-    indices_with_best_score = (0...scores.size).select { |i| scores[i] == best_score }
-    tallies = indices_with_best_score.map{ |i| tallies[i] }
+    # allow both tallies with shantei 0 and -1 to be returned as combining with other suits could result in either being 0
+    # but return only agari tally when the hai count is 14
+    best_score = 0 if best_score < 0 && hai_count != 14
+    indices_with_best_score = (0...scores.size).select { |i| scores[i] <= best_score }
+    tallies = indices_with_best_score.map { |i| tallies[i] }
+
+    # place tallies with lowest shantei count in front;
+    # as well as highest mentu count
+    # so that return_one/the first one would return that
+    if best_score == 0
+      tallies = tallies.each_with_index.sort_by { |tally, i| scores[i] - mentu[i] * 0.1 }.map(&:first)
+    end
 
     return [tallies.first], best_score if return_one
     [tallies, best_score]
   end
 
-  # benchmarking shows this is hte most intensive operation, instead of number splitting
+  # benchmarking shows this is the most intensive operation, instead of number splitting
   # i.e. calling more of this method would slow down performance
   # using symbols improve the perf. by 33%
   # althogh none of this matters if the result is cached
-  def get_score(tally)
-    mentu, kouhou, isolated, zyantou = [], [], [], 0
+  def get_score(tally, hai_count=nil, max_mentu=nil)
+    mentu, kouhou, isolated, zyantou = count_category(tally)
+    hai_count ||=  3 * mentu + 2 * kouhou + isolated
+    max_mentu ||= hai_count / 3
+
+    shantei = (max_mentu - mentu) * 2 - [max_mentu - mentu, kouhou - zyantou].min - zyantou
+    return [shantei, mentu] if shantei != 0
+
+    # normally, when there are 13 hais (4 mentu + 1 or 3 mentu + 2 kouhou), the shantei formula is not affected by the isolated count
+    # but if hai_count %3 == 2, e.g. 5, shantei of [1,234,5] and [12,345] will be the same which is weird
+    # thus it is adjusted
+    # note, cannot simply add isolated * 0.01 or mentu * 0.01 to formula, as this would be biased in cases like [111,2,333] vs. [11,123,33]
+    if hai_count % 3 == 2 && isolated != 0
+      [1, mentu]
+    else
+      [0, mentu]
+    end
+  end
+
+  def get_hai_count(tally)
+    mentu, kouhou, isolated, zyantou = count_category(tally)
+    hai_count = 3 * mentu + 2 * kouhou + isolated
+  end
+
+  def count_category(tally)
+    partition_by_category(tally).map(&:count)
+  end
+
+  def partition_by_category(tally)
+    mentu, incomplete_mentu, isolated, zyantou = [], [], [], []
     tally.each do |elem|
       case type = elem[0]
       when :"刻", :"順"
         mentu << elem
       when :"対", :"塔", :"嵌"
-        kouhou << elem
-        zyantou = 1 if type == :"対"
+        incomplete_mentu << elem
+        zyantou = [elem] if type == :"対"
       else
         isolated << elem
       end
     end
-    mentu_count, kouhou_count, isolated_count = mentu.count, kouhou.count, isolated.count
-
-    hai_count = 3 * mentu_count + 2 * kouhou_count + isolated_count
-    max_mentu_count = hai_count / 3
-    shantei = (max_mentu_count - mentu_count) * 2 - [max_mentu_count - mentu_count, kouhou_count - zyantou].min - zyantou
-    return shantei if hai_count == 14
-    return 0 if shantei <= 0 && isolated_count == 0 # no need to differentiate 0/-1 as combining with other suits might lead the same shantei
-    shantei - mentu_count * 0.01 + isolated_count * 0.1 # adjust for max mentu and least isolated
+    [mentu, incomplete_mentu, isolated, zyantou]
   end
 end
 
@@ -408,98 +336,6 @@ class ZihaiGrouper < NumGrouper
     { symbol: "対", category: "kouhou", method: :same },
   ]
 end
-
-class FurouIdentifier
-  class InvalidKanError < StandardError
-  end
-
-  class InvalidFurouError < StandardError
-  end
-
-  def self.identify(hais, ankan: false)
-    numbers, suits = hais.map { |p| p[:number] }, hais.map { |p| p[:suit] }
-    raise InvalidFurouError if suits.uniq.size != 1
-    suit = suits.first
-
-    if numbers.size == 4 && numbers.uniq.size == 1
-      type = ankan ? "暗槓" : "大明槓"
-      return { suit: suit, type: type, number: numbers.first, hais: hais }
-    else
-      raise InvalidKanError if ankan
-    end
-
-    grouper = suit == "字" ? ZihaiGrouper : NumGrouper
-    tally = grouper.group(numbers, return_one: true)
-    raise InvalidFurouError if tally['mentu'].empty? || tally['kouhou'].any? || tally['isolated'].any?
-    formation = tally['mentu'].first
-    formation.merge(suit: suit, hais: hais)
-  end
-
-  def self.string_into_formation(furou_characters)
-    ankan_marker = furou_characters.slice!('*')
-    furou_hais = Hai.convert_characters(furou_characters)
-    FurouIdentifier.identify(furou_hais, ankan: !!ankan_marker)
-  end
-end
-
-class MenzenGrouper
-  # should be instance method
-  attr_reader :hais, :return_one
-
-  def initialize(hais:, return_one: true)
-    @hais = hais
-    @return_one = return_one
-  end
-
-  def run
-    tallies_per_suit = separated_hais.map do |suit, numbers|
-      grouper = suit == "字" ? ZihaiGrouper : NumGrouper
-      tallies = grouper.new(numbers, return_one: return_one).run
-      tallies.map { |tally| tally.map{ |symbol| into_mentu(suit, symbol) } }
-    end
-    possibilities = get_permutations(tallies_per_suit)
-    possibilities.map { |p| p.flatten }
-  end
-
-  def separated_hais
-    @separated_hais ||= begin
-      hash = hais.group_by(&:suit)
-      hash.map { |suit, hais| [suit, hais.map(&:number).sort] }.to_h
-    end
-  end
-
-  # this doesn't work for isolated hais!
-  def into_mentu(suit, symbol)
-    Mentu.new(menzen: true, base: MentuBase.get(suit, symbol[0], symbol[1]))
-  end
-
-  def get_permutations(tallies)
-    permutations(tallies).flatten(tallies.size - 1)
-  end
-
-  def permutations(tallies, stored = [])
-    return stored if tallies.empty?
-    first_suit, rest = tallies[0], tallies[1..-1]
-    all = first_suit.map do |tally|
-      new_record = stored.dup
-      new_record << tally
-      permutations(rest, new_record)
-    end
-  end
-
-    # def combine_suits(tallies)
-    #   combined_tally = {}
-    #   %w(mentu kouhou isolated).each do |type|
-    #     combined_tally[type] = tallies.inject([]) { |arr, t| arr += t[type] }
-    #   end
-    #   combined_tally['zyantou'] = tallies.inject(false) { |bool, t| bool || t['zyantou'] }
-    #   combined_tally
-    # end
-end
-
-
-# hais = "456 45677  四 五 六78 9".scan(/[^\s|,]/).map{|c| Hai.get(c)}
-# MenzenGrouper.new(hais: hais, return_one: false).run
 
 class CacheGenerator
   class << self
@@ -533,27 +369,231 @@ class CacheGenerator
       end.flatten(1)
     end
 
-    def generate_cache(combinations = get_all_combinations, file = "cache4.json")
+    def generate_cache(file = NumGrouper::CACHE_FILE_PATH, max_tiles = 3)
       hash = {}
+      combinations = get_all_combinations(max_tiles: max_tiles)
       combinations.each do |numbers|
         value = NumGrouper.new(numbers).run
         key = numbers.join("")
         hash[key] = value
       end
-      File.open(file, 'a+') { |f| f.write(hash.to_json) }
+      File.open(file, 'w+') { |f| f.write(hash.to_json) }
+      return if max_tiles == 14
+      NumGrouper.load_cache
+      generate_cache(file, max_tiles + 1)
+    end
+
+    # Can generate a second cache base on the full cache, that returns only one tally(first) unless shantei is 0/-1
+    # this would help save on cache size
+  end
+end
+
+
+# class FurouIdentifier
+#   class InvalidKanError < StandardError
+#   end
+
+#   class InvalidFurouError < StandardError
+#   end
+
+#   def self.identify(hais, ankan: false)
+#     numbers, suits = hais.map { |p| p[:number] }, hais.map { |p| p[:suit] }
+#     raise InvalidFurouError if suits.uniq.size != 1
+#     suit = suits.first
+
+#     if numbers.size == 4 && numbers.uniq.size == 1
+#       type = ankan ? "暗槓" : "大明槓"
+#       return { suit: suit, type: type, number: numbers.first, hais: hais }
+#     else
+#       raise InvalidKanError if ankan
+#     end
+
+#     grouper = suit == "字" ? ZihaiGrouper : NumGrouper
+#     tally = grouper.group(numbers, return_one: true)
+#     raise InvalidFurouError if tally['mentu'].empty? || tally['kouhou'].any? || tally['isolated'].any?
+#     formation = tally['mentu'].first
+#     formation.merge(suit: suit, hais: hais)
+#   end
+
+#   def self.string_into_formation(furou_characters)
+#     ankan_marker = furou_characters.slice!('*')
+#     furou_hais = Hai.convert_characters(furou_characters)
+#     FurouIdentifier.identify(furou_hais, ankan: !!ankan_marker)
+#   end
+# end
+
+class MentuBase
+  attr_reader :suit, :number, :type, :characters, :mentu, :incomplete_mentu, :isolated
+
+  def initialize(suit:, number:, type:, characters:, incomplete_mentu: false, isolated: false)
+    @suit = suit
+    @number = number # smallest number in the group
+    @type = type
+    @characters = characters
+    @incomplete_mentu = incomplete_mentu
+    @isolated = isolated
+    @mentu = incomplete_mentu || isolated ? false : true
+  end
+
+  def kotu?
+    "刻" == type
+  end
+
+  def kan?
+    "槓" == type
+  end
+
+  def jun?
+    "順" == type
+  end
+
+  def tai_yao_kyuu?
+    if jun?
+      number == 1 || number == 7
+    else
+      yao_kyuu?
+    end
+  end
+
+  def yao_kyuu?
+    !jun? &&
+      number == 1 || number == 9
+  end
+
+  # might be better to save as instance variable
+  def hais
+    @hais ||= characters.map { Hai.get(character) }
+  end
+
+  def self.from_characters(characters)
+    character_lookup[characters]
+  end
+
+  def self.character_lookup
+    @lookup ||= begin
+      h = {}
+      all.values.each do |mentu|
+        if mentu.jun?
+          mentu.characters.split("").permutation.each do |permu|
+            h[permu.join] = mentu
+          end
+        else
+          h[mentu.characters] = mentu
+        end
+      end
+      h
+    end
+  end
+
+  def self.all
+    @all ||= begin
+      h = {}
+      Hai::TILES.each do |suit, characters|
+        characters.each_with_index do |character, i|
+          number = i + 1
+          h["#{suit}槓#{number}"] = MentuBase.new(suit: suit, number: number, type: "槓", characters: character * 4)
+          h["#{suit}刻#{number}"] = MentuBase.new(suit: suit, number: number, type: "刻", characters: character * 3)
+          h["#{suit}対#{number}"] = MentuBase.new(suit: suit, number: number, type: "対", characters: character * 2, incomplete_mentu: true)
+          h["#{suit}#{number}"] = MentuBase.new(suit: suit, number: number, type: "孤", characters: character, isolated: true)
+          next if suit == '字'
+          next if i > 7
+          h["#{suit}順#{number}"] = MentuBase.new(suit: suit, number: number, type: "順", characters: characters[i..i+2].join)
+          h["#{suit}嵌#{number}"] = MentuBase.new(suit: suit, number: number, type: "嵌", characters: [characters[i], characters[i+2]].join, incomplete_mentu: true)
+          next if i > 8
+          h["#{suit}塔#{number}"] = MentuBase.new(suit: suit, number: number, type: "塔", characters: characters[i..i+1].join, incomplete_mentu: true)
+        end
+      end
+      h
+    end
+  end
+
+  def self.get(suit, symbol)
+    all["#{suit}#{symbol}"]
+  end
+end
+
+class Mentu
+  extend Forwardable
+
+  delegate [
+    :suit, :type, :number, :kotu?, :kan?, :jun?, :yao_kyuu?, :tai_yao_kyuu?, :characters
+  ] => :"@base"
+
+
+  def initialize(menzen: true, base: nil, suit: nil, symbol: nil)
+    @base = base
+    @base ||= MentuBase.get(suit, symbol)
+    @menzen = menzen
+  end
+
+  def an_kou?
+    (kotu? || kan?) && menzen?
+  end
+
+  def an_kan?
+    kan? && menzen?
+  end
+
+  def mei_kan?
+    kan? && !menzen?
+  end
+
+  def menzen?
+    @menzen
+  end
+end
+
+class MenzenGrouper
+  # should be instance method
+  attr_reader :hais, :return_one
+
+  def initialize(hais:, return_one: true)
+    @hais = hais
+    @return_one = return_one
+  end
+
+  def run
+    tallies_per_suit = separated_hais.map do |suit, numbers|
+      grouper = suit == "字" ? ZihaiGrouper : NumGrouper
+      tallies = grouper.new(numbers, return_one: return_one).run
+      tallies.map { |tally| tally.map{ |symbol| into_mentu(suit, symbol) } }
+    end
+    possibilities = get_permutations(tallies_per_suit)
+    possibilities.map { |p| p.flatten }
+  end
+
+  def separated_hais
+    @separated_hais ||= begin
+      hash = hais.group_by(&:suit)
+      hash.map { |suit, hais| [suit, hais.map(&:number).sort] }.to_h
+    end
+  end
+
+  # this doesn't work for isolated hais!
+  def into_mentu(suit, symbol)
+    symbol = symbol.join if symbol.is_a? Array
+    Mentu.new(menzen: true, base: MentuBase.get(suit, symbol))
+  end
+
+  def get_permutations(tallies)
+    permutations(tallies).flatten(tallies.size - 1)
+  end
+
+  def permutations(tallies, stored = [])
+    return stored if tallies.empty?
+    first_suit, rest = tallies[0], tallies[1..-1]
+    all = first_suit.map do |tally|
+      new_record = stored.dup
+      new_record << tally
+      permutations(rest, new_record)
     end
   end
 end
 
-require 'benchmark'
-tests= CacheGenerator.get_all_combinations(min_tiles: 10).sample(100)
-Benchmark.bm do |x|
-  x.report { 
-    tests.each do |t|
-      NumGrouper.new(t).run
-    end
-  }
-end
+
+hais = "456 45677  四 五 六78 9".scan(/[^\s|,]/).map{|c| Hai.get(c)}
+binding.pry
+MenzenGrouper.new(hais: hais, return_one: false).run
 
 class GeneralGrouper
   attr_reader :menzen, :furou, :return_one, :shantei, :formations
