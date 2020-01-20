@@ -47,33 +47,10 @@ class Hai
   end
 
   class << self
-    # def lookup_table
-    #   @@lookup_table ||= TILES.each_with_object({}) do |(suit, characters), h|
-    #     characters.each_with_index do |character, i|
-    #       h[character] = { suit: suit, number: i + 1, character: character }
-    #     end
-    #   end
-    # end
-
     def convert_characters(characters)
       characters = characters.scan(/[^\s|,]/)
       characters.map { |c| convert_character(c) }
     end
-
-    # def convert_character(character)
-    #   return character unless character.class == String
-    #   hai = lookup_table[character]
-    #   raise InvalidCharacterError unless hai
-    #   hai
-    # end
-
-    # def to_characters(hais)
-    #   hais.map { |hai| to_character(hai)}
-    # end
-
-    # def to_character(hai)
-    #   TILES[hai[:suit]][hai[:number] - 1]
-    # end
 
     def convert_character(character)
       get(character)
@@ -117,8 +94,9 @@ class NumGrouper
     { symbol: "塔", category: "kouhou", method: :sequence },
     { symbol: "嵌", category: "kouhou", method: :kanchan },
   ]
-  CACHE_FILE_PATH = 'test2.json'# 'test.json'
+  CACHE_FILE_PATH = 'simple_cache.json'
 
+  # BUG: cannot use same cache for ZihaiGrouper, as it will return valid zihai jun groups
   def self.load_cache
     if File.exist?(CACHE_FILE_PATH)
       c = JSON.parse(File.read(CACHE_FILE_PATH))
@@ -151,8 +129,8 @@ class NumGrouper
   end
 
   def group(numbers, tally) # sorted
-    if NumGrouper.cache
-      cached_tally =  NumGrouper.cache[numbers.join("")]
+    if self.class.cache
+      cached_tally =  self.class.cache[numbers.join("")]
       if cached_tally
         combined_tallies = combine_tallies(cached_tally, tally)
         return [combined_tallies.first] if return_one
@@ -244,7 +222,7 @@ class NumGrouper
 
   def tally_isolated(tally, number)
     _tally = tally.clone
-    _tally += [number]
+    _tally += [[:"孤", number]]
   end
 
   def tally_with_category(tally, symbol, number)
@@ -277,7 +255,7 @@ class NumGrouper
       tallies = tallies.each_with_index.sort_by { |tally, i| scores[i] - mentu[i] * 0.1 }.map(&:first)
     end
 
-    return [tallies.first], best_score if return_one
+    return [[tallies.first], best_score] if return_one
     [tallies, best_score]
   end
 
@@ -335,6 +313,14 @@ class ZihaiGrouper < NumGrouper
     { symbol: "刻", category: "mentu",  method: :same },
     { symbol: "対", category: "kouhou", method: :same },
   ]
+
+  def self.load_cache
+    nil
+  end
+  
+  def self.cache
+    nil
+  end
 end
 
 class CacheGenerator
@@ -369,6 +355,14 @@ class CacheGenerator
       end.flatten(1)
     end
 
+    # benchmarking shows,
+    # no cache rakes 0.04 s. per run
+    # even with a very simple cache with max 3-combination, is able to speed up performance by 50%
+    # using a 10-number cache, it is able to reach 0.0004 s. per run
+    # vs. the full 14-number cache, that takes 0.00015 s. per run
+    # but the full cache takes up a lot of memory as well as time to load into memory
+    # thus it may be more beneficial to use the simpler 10-number cache
+    # expecially considering most of the time, the Grouper is not going to have to group 10+ number of the same suit
     def generate_cache(file = NumGrouper::CACHE_FILE_PATH, max_tiles = 3)
       hash = {}
       combinations = get_all_combinations(max_tiles: max_tiles)
@@ -378,7 +372,7 @@ class CacheGenerator
         hash[key] = value
       end
       File.open(file, 'w+') { |f| f.write(hash.to_json) }
-      return if max_tiles == 14
+      return if max_tiles == 10# 14
       NumGrouper.load_cache
       generate_cache(file, max_tiles + 1)
     end
@@ -388,142 +382,58 @@ class CacheGenerator
   end
 end
 
+# benchmarking shows there is negligible difference by caching the base of the mentu (i.e. the number group & methods)
+# compared to creating a new object during the calculation
+class Mentu
+  attr_reader :menzen, :suit, :number, :type, :symbol
 
-# class FurouIdentifier
-#   class InvalidKanError < StandardError
-#   end
-
-#   class InvalidFurouError < StandardError
-#   end
-
-#   def self.identify(hais, ankan: false)
-#     numbers, suits = hais.map { |p| p[:number] }, hais.map { |p| p[:suit] }
-#     raise InvalidFurouError if suits.uniq.size != 1
-#     suit = suits.first
-
-#     if numbers.size == 4 && numbers.uniq.size == 1
-#       type = ankan ? "暗槓" : "大明槓"
-#       return { suit: suit, type: type, number: numbers.first, hais: hais }
-#     else
-#       raise InvalidKanError if ankan
-#     end
-
-#     grouper = suit == "字" ? ZihaiGrouper : NumGrouper
-#     tally = grouper.group(numbers, return_one: true)
-#     raise InvalidFurouError if tally['mentu'].empty? || tally['kouhou'].any? || tally['isolated'].any?
-#     formation = tally['mentu'].first
-#     formation.merge(suit: suit, hais: hais)
-#   end
-
-#   def self.string_into_formation(furou_characters)
-#     ankan_marker = furou_characters.slice!('*')
-#     furou_hais = Hai.convert_characters(furou_characters)
-#     FurouIdentifier.identify(furou_hais, ankan: !!ankan_marker)
-#   end
-# end
-
-class MentuBase
-  attr_reader :suit, :number, :type, :characters, :mentu, :incomplete_mentu, :isolated
-
-  def initialize(suit:, number:, type:, characters:, incomplete_mentu: false, isolated: false)
+  def initialize(menzen:, suit:, number:, type:, symbol:)
+    @menzen = menzen
     @suit = suit
     @number = number # smallest number in the group
     @type = type
-    @characters = characters
-    @incomplete_mentu = incomplete_mentu
-    @isolated = isolated
-    @mentu = incomplete_mentu || isolated ? false : true
+    @symbol = symbol
+  end
+
+  def mentu?
+    @mentu ||= %i(槓 刻 順).include?(type)
+  end
+
+  def incomplete_mentu?
+    @incomplete_mentu ||= %i(対 嵌 塔).include?(type)
+  end
+
+  def isolated?
+    @isolated ||= type == :"孤"
+  end
+
+  def zyantou?
+    @zyantou ||= type == :"対"
   end
 
   def kotu?
-    "刻" == type
+    @kotu ||= :"刻" == type
   end
 
   def kan?
-    "槓" == type
+    @kan ||= :"槓" == type
   end
 
   def jun?
-    "順" == type
+    @jun ||= :"順" == type
   end
 
   def tai_yao_kyuu?
-    if jun?
-      number == 1 || number == 7
+    @tai_yao_kyu ||= if jun?
+      (number == 1 || number == 7)
     else
       yao_kyuu?
     end
   end
 
   def yao_kyuu?
-    !jun? &&
-      number == 1 || number == 9
-  end
-
-  # might be better to save as instance variable
-  def hais
-    @hais ||= characters.map { Hai.get(character) }
-  end
-
-  def self.from_characters(characters)
-    character_lookup[characters]
-  end
-
-  def self.character_lookup
-    @lookup ||= begin
-      h = {}
-      all.values.each do |mentu|
-        if mentu.jun?
-          mentu.characters.split("").permutation.each do |permu|
-            h[permu.join] = mentu
-          end
-        else
-          h[mentu.characters] = mentu
-        end
-      end
-      h
-    end
-  end
-
-  def self.all
-    @all ||= begin
-      h = {}
-      Hai::TILES.each do |suit, characters|
-        characters.each_with_index do |character, i|
-          number = i + 1
-          h["#{suit}槓#{number}"] = MentuBase.new(suit: suit, number: number, type: "槓", characters: character * 4)
-          h["#{suit}刻#{number}"] = MentuBase.new(suit: suit, number: number, type: "刻", characters: character * 3)
-          h["#{suit}対#{number}"] = MentuBase.new(suit: suit, number: number, type: "対", characters: character * 2, incomplete_mentu: true)
-          h["#{suit}#{number}"] = MentuBase.new(suit: suit, number: number, type: "孤", characters: character, isolated: true)
-          next if suit == '字'
-          next if i > 7
-          h["#{suit}順#{number}"] = MentuBase.new(suit: suit, number: number, type: "順", characters: characters[i..i+2].join)
-          h["#{suit}嵌#{number}"] = MentuBase.new(suit: suit, number: number, type: "嵌", characters: [characters[i], characters[i+2]].join, incomplete_mentu: true)
-          next if i > 8
-          h["#{suit}塔#{number}"] = MentuBase.new(suit: suit, number: number, type: "塔", characters: characters[i..i+1].join, incomplete_mentu: true)
-        end
-      end
-      h
-    end
-  end
-
-  def self.get(suit, symbol)
-    all["#{suit}#{symbol}"]
-  end
-end
-
-class Mentu
-  extend Forwardable
-
-  delegate [
-    :suit, :type, :number, :kotu?, :kan?, :jun?, :yao_kyuu?, :tai_yao_kyuu?, :characters
-  ] => :"@base"
-
-
-  def initialize(menzen: true, base: nil, suit: nil, symbol: nil)
-    @base = base
-    @base ||= MentuBase.get(suit, symbol)
-    @menzen = menzen
+    @yao_kyuu ||= !jun? &&
+      (number == 1 || number == 9)
   end
 
   def an_kou?
@@ -540,6 +450,56 @@ class Mentu
 
   def menzen?
     @menzen
+  end
+
+  def characters
+    @characters ||= self.class.symbol_to_characters[symbol]
+  end
+
+  def hais
+    @hais ||= characters.map { Hai.get(character) }
+  end
+
+  def self.from_symbol(menzen:, symbol:)
+    suit, type, number = symbol.split("")
+    new(menzen: menzen, suit: suit.to_sym, type: type.to_sym, number: number, symbol: symbol.to_sym)
+  end
+
+  def self.from_characters(menzen:, characters:)
+    symbol = self.class.characters_to_symbol[characters]
+    from_symbol(menzen: menzen, symbol: symbol)
+  end
+
+  def self.characters_to_symbol
+    @characters_to_symbol ||= begin
+      h = {}
+      symbol_to_characters.each do |k, v|
+        h[v] = k
+      end
+      h
+    end
+  end
+
+  def self.symbol_to_characters
+    @symbol_to_characters ||= begin
+      h = {}
+      Hai::TILES.each do |suit, characters|
+        characters.each_with_index do |character, i|
+          number = i + 1
+          h["#{suit}槓#{number}"] = character * 4
+          h["#{suit}刻#{number}"] = character * 3
+          h["#{suit}対#{number}"] = character * 2
+          h["#{suit}孤#{number}"] = character
+          next if suit == '字'
+          next if i > 7
+          h["#{suit}順#{number}"] = characters[i..i+2].join
+          h["#{suit}嵌#{number}"] = [characters[i], characters[i+2]].join
+          next if i > 8
+          h["#{suit}塔#{number}"] = characters[i..i+1].join
+        end
+      end
+      h
+    end
   end
 end
 
@@ -569,10 +529,8 @@ class MenzenGrouper
     end
   end
 
-  # this doesn't work for isolated hais!
   def into_mentu(suit, symbol)
-    symbol = symbol.join if symbol.is_a? Array
-    Mentu.new(menzen: true, base: MentuBase.get(suit, symbol))
+    Mentu.from_symbol(menzen: true, symbol: "#{suit}#{symbol.join}")
   end
 
   def get_permutations(tallies)
@@ -590,17 +548,43 @@ class MenzenGrouper
   end
 end
 
+module RegularizeHelper
+  def as_array(menzen)
+    return menzen if menzen.class == Array
+    menzen.scan(/[^\s|,]/)
+  end
 
-hais = "456 45677  四 五 六78 9".scan(/[^\s|,]/).map{|c| Hai.get(c)}
-binding.pry
-MenzenGrouper.new(hais: hais, return_one: false).run
+  def as_formations(array)
+    array.map { |group| as_formation(group) }
+  end
+
+  def as_formation(group)
+    return group if group.class == Mentu
+    characters = group.scan(/[^\s|,]/).join
+    Mentu.from_characters(menzen: false, characters: characters)
+  end
+
+  def into_number(input)
+    return input if input.class == Integer
+    Hai.convert_character(input)[:number]
+  end
+
+  def as_hais(menzen)
+    menzen.map { |m| as_hai(m) }
+  end
+
+  def as_hai(input)
+    return input if input.class == Hai
+    Hai.convert_character(input)
+  end
+end
 
 class GeneralGrouper
   attr_reader :menzen, :furou, :return_one, :shantei, :formations
 
   def initialize(menzen: , furou: [], return_one: true)
-    @menzen = menzen # accept hais only
-    @furou = furou
+    @menzen = menzen # array [Hai]
+    @furou = furou # array [Mentu]
     @return_one = return_one
     @shantei = nil
     @formations = nil
@@ -620,19 +604,34 @@ class GeneralGrouper
   def tallies
     return @tallies if @tallies
 
-    tallies = MenzenGrouper.group(menzen, return_one: return_one)
-    tallies.each do |tally|
-      tally['menzen_mentu'] = tally['mentu'].map { |m| m.dup }
-      tally['mentu'] += furou
+    tallies = MenzenGrouper.new(hais: menzen, return_one: return_one).run
+    tallies.map! do |tally|
+      tally += furou
     end
     @tallies = tallies
   end
 
   def get_shantei_from_tally(tally)
-    mentu, kouhou, zyantou = tally["mentu"].size, tally["kouhou"].size, tally["zyantou"] ? 1 : 0
-    8 - 2 * mentu - [4 - mentu, kouhou - zyantou].min - zyantou
+    mentu, incomplete_mentu, isolated, zyantou = %w(mentu? incomplete_mentu? isolated? zyantou?).map { |type| tally.count { |m| m.send(type) } }
+    zyantou = 1 if zyantou >= 1
+
+    8 - 2 * mentu - [4 - mentu, incomplete_mentu - zyantou].min - zyantou
   end
 end
+
+# include RegularizeHelper
+# NumGrouper.load_cache
+
+
+# all_hai = Hai.all.values.flatten
+# Benchmark.bm do |x|
+#   x.report do
+#     10000.times do
+#       hais = (0...14).map { all_hai.sample }
+#       g = GeneralGrouper.new(menzen: hais).run
+#     end
+#   end
+# end
 
 class KokuShiMuSouGrouper
   KOKUSHI_CHARACTERS = %w(東 南 西 北 白 發 中 一 九 ① ⑨ 1 9)
@@ -642,7 +641,7 @@ class KokuShiMuSouGrouper
   def initialize(menzen:)
     @menzen = menzen # accept hais only
 
-    @unmatched_characters = menzen.map { |h| h[:character] }
+    @unmatched_characters = menzen.map(&:character)
     @matched_kokushi_characters = []
     @shantei = nil
     @machi = nil
@@ -682,7 +681,7 @@ class ChiToiTuGrouper
   def initialize(menzen:)
     @menzen = menzen # accept hais only
 
-    @characters = menzen.map { |h| h[:character] }
+    @characters = menzen.map(&:character)
     @shantei = nil
     @machi = nil
   end
@@ -701,35 +700,6 @@ class ChiToiTuGrouper
   end
 end
 
-module RegularizeHelper
-  def as_array(menzen)
-    return menzen if menzen.class == Array
-    menzen.scan(/[^\s|,]/)
-  end
-
-  def as_formations(array)
-    array.map { |group| as_formation(group) }
-  end
-
-  def as_formation(group)
-    return group if group.class == Hash
-    FurouIdentifier.string_into_formation(group)
-  end
-
-  def into_number(input)
-    return input if input.class == Integer
-    Hai.convert_character(input)[:number]
-  end
-
-  def as_hais(menzen)
-    menzen.map { |m| as_hai(m) }
-  end
-
-  def as_hai(input)
-    return input if input.class == Hash
-    Hai.convert_character(input)
-  end
-end
 
 class ShanteiCalculator
   include RegularizeHelper
